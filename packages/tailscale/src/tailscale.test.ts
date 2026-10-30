@@ -1,0 +1,444 @@
+import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
+
+import { mockSpawnerLayer, spawnerLayer } from "./mockSpawner.ts";
+import {
+  buildTailscaleHttpsBaseUrl,
+  disableTailscaleServe,
+  ensureTailscaleServe,
+  isTailscaleIpv4Address,
+  parseTailscaleMagicDnsName,
+  parseTailscaleStatus,
+  readTailscaleStatus,
+  TAILSCALE_STATUS_TIMEOUT,
+  tailscaleFallbackExecutables,
+  TailscaleCommandExitError,
+  TailscaleCommandSpawnError,
+  TailscaleCommandTimeoutError,
+  TailscaleStatusParseError,
+} from "./tailscale.ts";
+
+/**
+ * Asserts nothing reachable from `error` contains `secret`. Recurses through
+ * nested objects, arrays, and `cause` chains rather than checking only
+ * top-level strings: a leak one level down (say, a wrapped cause carrying raw
+ * stderr) is just as visible in a log, and a shallow check would pass it.
+ *
+ * Walks values instead of serializing so it holds for fields added later, and
+ * tracks visited objects so a cyclic cause chain terminates.
+ */
+function assertCarriesNoSecret(error: object, secret: string): void {
+  const seen = new WeakSet<object>();
+
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === "string") {
+      assert.notInclude(value, secret, `${path} leaked stderr`);
+      return;
+    }
+    if (typeof value !== "object" || value === null || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => walk(entry, `${path}[${String(index)}]`));
+      return;
+    }
+    // `message` and `cause` are getters on Error subclasses, so they are not
+    // own enumerable properties and Object.entries alone would skip them.
+    walk((value as { message?: unknown }).message, `${path}.message`);
+    walk((value as { cause?: unknown }).cause, `${path}.cause`);
+    for (const [key, nested] of Object.entries(value)) {
+      walk(nested, `${path}.${key}`);
+    }
+  };
+
+  walk(error, "error");
+}
+const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
+const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+
+function neverFinishingMockHandle() {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.never,
+    isRunning: Effect.succeed(true),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+}
+
+describe("tailscale", () => {
+  it.effect("detects Tailnet IPv4 addresses", () =>
+    Effect.sync(() => {
+      assert.equal(isTailscaleIpv4Address("100.64.0.1"), true);
+      assert.equal(isTailscaleIpv4Address("100.127.255.254"), true);
+      assert.equal(isTailscaleIpv4Address("100.128.0.1"), false);
+      assert.equal(isTailscaleIpv4Address("192.168.1.44"), false);
+    }),
+  );
+
+  it.effect("parses MagicDNS names from tailscale status", () =>
+    Effect.gen(function* () {
+      const dnsName = yield* parseTailscaleMagicDnsName(tailscaleStatusJson);
+      assert.equal(dnsName, "desktop.tail.ts.net");
+      assert.equal(yield* parseTailscaleMagicDnsName("{}"), null);
+    }),
+  );
+
+  it.effect("parses status facts", () =>
+    Effect.gen(function* () {
+      const status = yield* parseTailscaleStatus(tailscaleStatusJson);
+      assert.deepEqual(status, {
+        magicDnsName: "desktop.tail.ts.net",
+        tailnetIpv4Addresses: ["100.100.100.100"],
+      });
+    }),
+  );
+
+  it.effect("preserves status decoding failures without exposing cause text", () =>
+    Effect.gen(function* () {
+      const error = yield* parseTailscaleStatus("{not-json").pipe(Effect.flip);
+
+      assert.instanceOf(error, TailscaleStatusParseError);
+      assert.equal(error.message, "Failed to decode tailscale status JSON.");
+      assert.isDefined(error.cause);
+      assert.notInclude(error.message, String(error.cause));
+    }),
+  );
+
+  it.effect("builds clean HTTPS base URLs", () =>
+    Effect.sync(() => {
+      assert.equal(
+        buildTailscaleHttpsBaseUrl({ magicDnsName: "desktop.tail.ts.net" }),
+        "https://desktop.tail.ts.net/",
+      );
+      assert.equal(
+        buildTailscaleHttpsBaseUrl({ magicDnsName: "desktop.tail.ts.net", servePort: 8443 }),
+        "https://desktop.tail.ts.net:8443/",
+      );
+    }),
+  );
+
+  it.effect("reads tailscale status through the process spawner service", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["status", "--json"]);
+      return {
+        stdout: tailscaleStatusWithSingleIpJson,
+      };
+    });
+
+    return Effect.gen(function* () {
+      const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
+      assert.deepEqual(status, {
+        magicDnsName: "desktop.tail.ts.net",
+        tailnetIpv4Addresses: ["100.90.1.2"],
+      });
+    });
+  });
+
+  it.effect("preserves tailscale spawn failures as causes", () => {
+    const systemCause = new Error("private executable lookup detail");
+    const cause = PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      cause: systemCause,
+    });
+    const layer = spawnerLayer(ChildProcessSpawner.make(() => Effect.fail(cause)));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleCommandSpawnError);
+      assert.equal(error.executable, "tailscale");
+      assert.equal(error.subcommand, "status");
+      assert.equal(error.argumentCount, 2);
+      assert.strictEqual(error.cause, cause);
+      assert.equal(error.message, "Failed to spawn tailscale status.");
+      assert.notInclude(error.message, systemCause.message);
+    });
+  });
+
+  it.effect("finds tailscale at its install location when the name is not on PATH", () => {
+    const tried: Array<string> = [];
+    const layer = mockSpawnerLayer((command) => {
+      tried.push(command);
+      return command === "/usr/bin/tailscale"
+        ? { stdout: tailscaleStatusWithSingleIpJson }
+        : "not-found";
+    });
+
+    return Effect.gen(function* () {
+      const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
+      assert.equal(status.magicDnsName, "desktop.tail.ts.net");
+      assert.deepEqual(tried, ["tailscale", "/usr/bin/tailscale"]);
+    });
+  });
+
+  it.effect("does not retry from install locations once the CLI has started", () => {
+    const tried: Array<string> = [];
+    const layer = mockSpawnerLayer((command) => {
+      tried.push(command);
+      return { code: 1, stderr: "Logged out." };
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.deepEqual(tried, ["tailscale"]);
+    });
+  });
+
+  it.effect("reports the plain-name failure when no install location has tailscale", () => {
+    const layer = mockSpawnerLayer(() => "not-found");
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleCommandSpawnError);
+      assert.equal(error.executable, "tailscale");
+    });
+  });
+
+  it("lists Windows install locations from the environment without duplicates", () => {
+    assert.deepEqual(
+      tailscaleFallbackExecutables("win32", {
+        ProgramFiles: "D:\\Apps",
+        ProgramW6432: "D:\\Apps",
+        "ProgramFiles(x86)": "C:\\Program Files (x86)",
+      }),
+      [
+        "D:\\Apps\\Tailscale\\tailscale.exe",
+        "C:\\Program Files (x86)\\Tailscale\\tailscale.exe",
+        "C:\\Program Files\\Tailscale\\tailscale.exe",
+      ],
+    );
+  });
+
+  it("includes the macOS app bundle, where the CLI is not on PATH", () => {
+    assert.include(
+      tailscaleFallbackExecutables("darwin", {}),
+      "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    );
+  });
+
+  it.effect("turns spawn defects into typed spawn failures", () => {
+    // A non-directory entry on PATH makes node's spawn throw ENOTDIR
+    // synchronously. The platform spawner calls `NodeChildProcess.spawn` from
+    // inside an `Effect.callback` registration, so that throw arrives as a
+    // defect rather than a typed error - the shape reproduced here.
+    const defect = Object.assign(new Error("spawn tailscale ENOTDIR"), { code: "ENOTDIR" });
+    const layer = spawnerLayer(
+      ChildProcessSpawner.make(() =>
+        Effect.callback<never, never>(() => {
+          throw defect;
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const statusError = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(statusError, TailscaleCommandSpawnError);
+      assert.equal(statusError.subcommand, "status");
+      assert.strictEqual(statusError.cause, defect);
+
+      const serveError = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      assert.instanceOf(serveError, TailscaleCommandSpawnError);
+      assert.equal(serveError.subcommand, "serve");
+      assert.strictEqual(serveError.cause, defect);
+
+      // What callers actually rely on: the desktop endpoint providers recover
+      // with `Effect.orElseSucceed`, which only sees the typed error channel.
+      const degraded = yield* readTailscaleStatus.pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.provide(layer),
+      );
+      assert.equal(degraded, null);
+    });
+  });
+
+  it.effect("keeps nonzero exit diagnostics structured", () => {
+    const layer = mockSpawnerLayer(() => ({
+      code: 7,
+      stderr: "not logged in tskey-auth-secret-token-value",
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.executable, "tailscale");
+      assert.equal(error.subcommand, "status");
+      assert.equal(error.argumentCount, 2);
+      assert.equal(error.exitCode, 7);
+      assert.equal(error.stdoutLength, 0);
+      assert.equal(error.stderrLength, 43);
+      assert.notProperty(error, "command");
+      assert.notProperty(error, "stderr");
+      assert.notInclude(error.message, "tskey-auth-secret-token-value");
+      assert.equal(error.message, "tailscale status exited with code 7.");
+      assert.equal(error.stderrDiagnostic, "not-logged-in");
+      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
+    });
+  });
+
+  it.effect("classifies unrecognized stderr without quoting it", () => {
+    const layer = mockSpawnerLayer(() => ({
+      code: 3,
+      stderr: "something novel went wrong for node fluffy-badger tskey-auth-secret-token-value",
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      // Unmatched stderr degrades to "unknown" rather than passing text
+      // through — that fallback is what keeps novel output from leaking.
+      assert.equal(error.stderrDiagnostic, "unknown");
+      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
+      assertCarriesNoSecret(error, "fluffy-badger");
+    });
+  });
+
+  it.effect("times out tailscale status through TestClock", () => {
+    const layer = Layer.merge(
+      TestClock.layer(),
+      spawnerLayer(ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle()))),
+    );
+
+    return Effect.gen(function* () {
+      const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(TAILSCALE_STATUS_TIMEOUT);
+      const error = yield* Fiber.join(fiber);
+
+      assert.instanceOf(error, TailscaleCommandTimeoutError);
+      assert.equal(error.executable, "tailscale");
+      assert.equal(error.subcommand, "status");
+      assert.equal(error.argumentCount, 2);
+      assert.equal(error.timeoutMs, 1_500);
+      assert.isTrue(Cause.isTimeoutError(error.cause));
+      assert.equal(error.message, "tailscale status timed out after 1500ms.");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("configures tailscale serve through the process spawner service", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
+      return {};
+    });
+
+    return ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("retains tailscale serve exit diagnostics", () => {
+    const layer = mockSpawnerLayer(() => ({
+      code: 1,
+      stderr: "serve permission denied tskey-auth-secret-token-value",
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.executable, "tailscale");
+      assert.equal(error.subcommand, "serve");
+      assert.equal(error.argumentCount, 4);
+      assert.equal(error.exitCode, 1);
+      assert.equal(error.stderrLength, 53);
+      assert.notProperty(error, "command");
+      assert.notProperty(error, "stderr");
+      assert.notInclude(error.message, "tskey-auth-secret-token-value");
+      // The diagnostic classifies the failure without quoting stderr, so the
+      // key cannot reach a log through it either.
+      assert.equal(error.stderrDiagnostic, "permission-denied");
+      assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
+    });
+  });
+
+  it.effect("disables tailscale serve through the process spawner service", () => {
+    const commands: {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+    }[] = [];
+    const layer = mockSpawnerLayer((command, args) => {
+      commands.push({ command, args });
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "--https=8443", "off"]);
+      return {};
+    });
+
+    return Effect.gen(function* () {
+      yield* disableTailscaleServe({ servePort: 8443 }).pipe(Effect.provide(layer));
+      assert.deepEqual(commands, [
+        { command: "tailscale", args: ["serve", "--https=8443", "off"] },
+      ]);
+    });
+  });
+
+  it.effect("publishes through funnel and switches it off with the same subcommand", () => {
+    const commands: ReadonlyArray<string>[] = [];
+    const layer = mockSpawnerLayer((_command, args) => {
+      commands.push(args);
+      return {};
+    });
+
+    return Effect.gen(function* () {
+      yield* ensureTailscaleServe({ localPort: 8080, exposure: "funnel" });
+      yield* disableTailscaleServe({ servePort: 8443, exposure: "funnel" });
+      assert.deepEqual(commands, [
+        ["funnel", "--bg", "--https=443", "http://127.0.0.1:8080"],
+        ["funnel", "--https=8443", "off"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("names setup failures by diagnostic without quoting stderr", () => {
+    const cases = [
+      ["failed to connect to local Tailscale service; is Tailscale running?", "daemon-unreachable"],
+      [
+        "Serve is not enabled on your tailnet. To enable, visit: https://example.test/f/serve",
+        "https-disabled",
+      ],
+      ["Funnel not available; HTTPS must be enabled.", "https-disabled"],
+      ['Funnel not available; "funnel" node attribute not set.', "funnel-not-allowed"],
+    ] as const;
+
+    return Effect.gen(function* () {
+      for (const [stderr, expected] of cases) {
+        const error = yield* ensureTailscaleServe({ localPort: 8080, exposure: "funnel" }).pipe(
+          Effect.flip,
+          Effect.provide(
+            mockSpawnerLayer(() => ({ code: 1, stderr: `${stderr} tskey-auth-secret` })),
+          ),
+        );
+        assert.instanceOf(error, TailscaleCommandExitError);
+        assert.equal(error.subcommand, "funnel");
+        assert.equal(error.stderrDiagnostic, expected);
+        assertCarriesNoSecret(error, "tskey-auth-secret");
+      }
+    });
+  });
+});

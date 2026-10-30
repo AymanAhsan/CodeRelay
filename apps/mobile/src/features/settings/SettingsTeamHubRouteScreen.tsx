@@ -1,0 +1,638 @@
+import { useAtomValue } from "@effect/atom-react";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import {
+  formatTeamHubContract,
+  incomingTeamHubTasks,
+  delegatedTeamHubTasks,
+  parseTeamHubDomains,
+  parseTeamHubLink,
+  readTeamHubInvites,
+  createTeamHubStateAtomFamily,
+  runTeamHubAction,
+  teamHubActionErrorMessage,
+  teamHubTaskTurn,
+  type TeamHubAction,
+} from "@t3tools/client-runtime/state/team-hub";
+import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { TeamHubInvite } from "@t3tools/contracts/teamHub";
+import * as Option from "effect/Option";
+import { CommonActions, useNavigation } from "@react-navigation/native";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { useEffect, useMemo, useState } from "react";
+import { Pressable, ScrollView, TextInput, View } from "react-native";
+
+import { AppText as Text } from "../../components/AppText";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { usePreparedConnection } from "../../state/session";
+import { environmentShell } from "../../state/shell";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { SettingsScreen } from "./components/SettingsScreen";
+import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+
+const teamHubStateAtom = createTeamHubStateAtomFamily(connectionAtomRuntime);
+
+const actionCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "team hub action",
+  execute: (
+    { prepared, action }: { prepared: PreparedConnection; action: TeamHubAction },
+    registry,
+  ) =>
+    runTeamHubAction(prepared, action, {
+      registry,
+      shell: environmentShell.stateValueAtom(prepared.environmentId),
+    }),
+});
+
+function Action({
+  label,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      disabled={disabled}
+      onPress={onPress}
+      className="rounded-xl bg-accent px-4 py-2 disabled:opacity-50"
+    >
+      <Text className="text-center text-primary-text">{label}</Text>
+    </Pressable>
+  );
+}
+
+function AdminInvites({
+  prepared,
+  busy,
+  onRevoke,
+}: {
+  prepared: PreparedConnection;
+  busy: boolean;
+  onRevoke: (inviteId: string) => void;
+}) {
+  const query = useMemo(
+    () =>
+      connectionAtomRuntime
+        .atom(readTeamHubInvites(prepared))
+        .pipe(
+          Atom.swr({ staleTime: 4_000, revalidateOnMount: true }),
+          Atom.withLabel("mobile-team-hub-invites"),
+        ),
+    [prepared],
+  );
+  const invites = Option.getOrNull(AsyncResult.value(useAtomValue(query))) ?? [];
+  useEffect(() => {
+    const timer = setInterval(() => appAtomRegistry.refresh(query), 5_000);
+    return () => clearInterval(timer);
+  }, [query]);
+  return (
+    <View className="gap-2">
+      {invites
+        .filter((item) => !item.usedAt && !item.revokedAt)
+        .map((item) => (
+          <View key={item.id} className="gap-1">
+            <Text>Invite expires {new Date(item.expiresAt).toLocaleString()}</Text>
+            <Action label="Revoke invite" disabled={busy} onPress={() => onRevoke(item.id)} />
+          </View>
+        ))}
+    </View>
+  );
+}
+
+function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
+  const navigation = useNavigation();
+  const query = teamHubStateAtom({ environmentId: prepared.environmentId, input: {} });
+  const result = useAtomValue(query);
+  const state = Option.getOrNull(AsyncResult.value(result));
+  const command = useAtomCommand(actionCommand, { reportFailure: false });
+  const [link, setLink] = useState("");
+  const [name, setName] = useState("");
+  const [setup, setSetup] = useState(false);
+  const [teamName, setTeamName] = useState("");
+  const [repo, setRepo] = useState("");
+  const [editingRepo, setEditingRepo] = useState(false);
+  const [repoDraft, setRepoDraft] = useState("");
+  const [editingAreas, setEditingAreas] = useState(false);
+  const [areasDraft, setAreasDraft] = useState("");
+  const [invite, setInvite] = useState<TeamHubInvite | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const act = async (action: TeamHubAction) => {
+    setBusy(true);
+    setError(null);
+    const outcome = await command({ prepared, action });
+    setBusy(false);
+    if (AsyncResult.isSuccess(outcome)) {
+      if (action.type === "updateRepo") setEditingRepo(false);
+      if (action.type === "publish" && action.input.type === "set_domains") setEditingAreas(false);
+      if (action.type === "invite") setInvite(outcome.value as TeamHubInvite);
+      if (
+        action.type === "decideTask" &&
+        action.decision === "accepted" &&
+        "threadId" in outcome.value &&
+        outcome.value.threadId !== null
+      ) {
+        navigation.dispatch(
+          CommonActions.navigate("Thread", {
+            environmentId: prepared.environmentId,
+            threadId: outcome.value.threadId,
+          }),
+        );
+      }
+    } else setError(teamHubActionErrorMessage(squashAtomCommandFailure(outcome)));
+  };
+  const enroll = () => {
+    const parsed = parseTeamHubLink(link);
+    if (!parsed || !name.trim() || (setup && (!teamName.trim() || !repo.trim()))) {
+      setError("Enter a valid hub link and all required fields.");
+      return;
+    }
+    void act(
+      setup
+        ? {
+            type: "bootstrap",
+            input: {
+              ...parsed,
+              displayName: name.trim(),
+              teamName: teamName.trim(),
+              repo: repo.trim(),
+            },
+          }
+        : { type: "join", input: { ...parsed, displayName: name.trim() } },
+    );
+  };
+  if (!state) return <Text>Loading team hub…</Text>;
+  const snapshot = state.snapshot;
+  const self = snapshot?.members.find((member) => member.id === snapshot.selfId);
+  const tasks = incomingTeamHubTasks(snapshot, { includeWaiting: true });
+  const memberName = (memberId: string | null) =>
+    snapshot?.members.find((member) => member.id === memberId)?.name ?? "Teammate";
+  return (
+    <View className="gap-4">
+      {state.url === null ? (
+        <View className="gap-3">
+          <Text>
+            {setup
+              ? "Paste the one-time link printed by your hub."
+              : "Paste an invite link from your team admin."}
+          </Text>
+          <TextInput
+            accessibilityLabel="Team hub link"
+            placeholder="Hub link"
+            value={link}
+            onChangeText={setLink}
+            autoCapitalize="none"
+            className="rounded-xl bg-grouped-card p-3 text-foreground"
+          />
+          <TextInput
+            accessibilityLabel="Display name"
+            placeholder="Your display name"
+            value={name}
+            onChangeText={setName}
+            className="rounded-xl bg-grouped-card p-3 text-foreground"
+          />
+          {setup && (
+            <>
+              <TextInput
+                accessibilityLabel="Team name"
+                placeholder="Team name"
+                value={teamName}
+                onChangeText={setTeamName}
+                className="rounded-xl bg-grouped-card p-3 text-foreground"
+              />
+              <TextInput
+                accessibilityLabel="Git remote URL"
+                placeholder="Git remote URL"
+                value={repo}
+                onChangeText={setRepo}
+                autoCapitalize="none"
+                className="rounded-xl bg-grouped-card p-3 text-foreground"
+              />
+            </>
+          )}
+          <Action label={setup ? "Create team" : "Join team"} disabled={busy} onPress={enroll} />
+          <Action
+            label={setup ? "Join instead" : "Set up a hub"}
+            disabled={busy}
+            onPress={() => setSetup(!setup)}
+          />
+        </View>
+      ) : (
+        <View className="gap-4">
+          <View>
+            <Text className="text-lg font-t3-medium">{snapshot?.team.name ?? state.url}</Text>
+            <Text className="text-foreground-muted">
+              {state.status}
+              {state.error ? ` · ${state.error}` : ""}
+            </Text>
+          </View>
+          {snapshot && (
+            <>
+              <View className="gap-2">
+                <Text className="font-t3-medium">GitHub repository</Text>
+                {editingRepo && self?.role === "admin" ? (
+                  <>
+                    <TextInput
+                      accessibilityLabel="GitHub repository"
+                      placeholder="Git remote URL"
+                      value={repoDraft}
+                      onChangeText={setRepoDraft}
+                      maxLength={256}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!busy}
+                      className="rounded-xl bg-grouped-card p-3 text-foreground"
+                    />
+                    <Action
+                      label="Save repository"
+                      disabled={busy || state.status !== "connected" || !repoDraft.trim()}
+                      onPress={() => void act({ type: "updateRepo", repo: repoDraft.trim() })}
+                    />
+                    <Action
+                      label="Cancel"
+                      disabled={busy}
+                      onPress={() => {
+                        setEditingRepo(false);
+                        setError(null);
+                      }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Text className="text-foreground-muted">{snapshot.team.repo}</Text>
+                    {self?.role === "admin" && (
+                      <Action
+                        label="Edit repository"
+                        disabled={busy || state.status !== "connected"}
+                        onPress={() => {
+                          setRepoDraft(snapshot.team.repo);
+                          setEditingRepo(true);
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+              </View>
+              <View className="gap-1">
+                <Text className="font-t3-medium">Members</Text>
+                {snapshot.members.map((member) => (
+                  <View key={member.id} className="gap-1">
+                    <Text>
+                      {member.online ? "●" : "○"} {member.name}
+                      {member.id === snapshot.selfId ? " (you)" : ""}
+                    </Text>
+                    {member.domains.length > 0 && (
+                      <Text className="text-foreground-muted">{member.domains.join(", ")}</Text>
+                    )}
+                    {self?.role === "admin" && member.id !== snapshot.selfId && (
+                      <Action
+                        label={`Remove ${member.name}`}
+                        disabled={busy}
+                        onPress={() => void act({ type: "removeMember", memberId: member.id })}
+                      />
+                    )}
+                  </View>
+                ))}
+              </View>
+              <View className="gap-2">
+                <Text className="font-t3-medium">Your areas</Text>
+                <Text className="text-foreground-muted">
+                  Repository paths you own, such as apps/api/**. Teammates' agents send tasks for
+                  these paths to you.
+                </Text>
+                {editingAreas ? (
+                  <>
+                    <TextInput
+                      accessibilityLabel="Your areas"
+                      placeholder={"apps/api/**\npackages/contracts/**"}
+                      value={areasDraft}
+                      onChangeText={setAreasDraft}
+                      multiline
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!busy}
+                      className="rounded-xl bg-grouped-card p-3 text-foreground"
+                    />
+                    <Action
+                      label="Save areas"
+                      disabled={busy || state.status !== "connected"}
+                      onPress={() =>
+                        void act({
+                          type: "publish",
+                          input: { type: "set_domains", domains: parseTeamHubDomains(areasDraft) },
+                        })
+                      }
+                    />
+                    <Action
+                      label="Cancel"
+                      disabled={busy}
+                      onPress={() => {
+                        setEditingAreas(false);
+                        setError(null);
+                      }}
+                    />
+                  </>
+                ) : (
+                  <Action
+                    label="Edit areas"
+                    disabled={busy || state.status !== "connected"}
+                    onPress={() => {
+                      setAreasDraft(self?.domains.join("\n") ?? "");
+                      setEditingAreas(true);
+                    }}
+                  />
+                )}
+              </View>
+              <View className="gap-2">
+                <Text className="font-t3-medium">Automatic tasks</Text>
+                <Text className="text-foreground-muted">
+                  Start contract tasks inside your areas from trusted teammates. One automatic task
+                  at a time. Each allowance permits 3 attempts, including failures.
+                </Text>
+                <Text>{self?.autoAccept?.remainingStarts ?? 0} automatic starts remaining.</Text>
+                <Action
+                  label={
+                    (self?.autoAccept?.remainingStarts ?? 0) > 0
+                      ? "Turn off automatic tasks"
+                      : "Allow 3 automatic starts"
+                  }
+                  disabled={
+                    busy ||
+                    state.status !== "connected" ||
+                    ((self?.autoAccept?.remainingStarts ?? 0) === 0 &&
+                      !self?.autoAccept?.trustedAuthorIds.length)
+                  }
+                  onPress={() =>
+                    void act({
+                      type: "publish",
+                      input: {
+                        type: "set_auto_accept",
+                        policy: {
+                          trustedAuthorIds: self?.autoAccept?.trustedAuthorIds ?? [],
+                          remainingStarts: (self?.autoAccept?.remainingStarts ?? 0) > 0 ? 0 : 3,
+                        },
+                      },
+                    })
+                  }
+                />
+                <Text className="text-foreground-muted">
+                  Turning off leaves existing threads running. Changing trust turns off the
+                  allowance.
+                </Text>
+                {snapshot.members
+                  .filter((member) => member.id !== snapshot.selfId)
+                  .map((member) => {
+                    const trusted = self?.autoAccept?.trustedAuthorIds ?? [];
+                    const selected = trusted.includes(member.id);
+                    return (
+                      <Action
+                        key={member.id}
+                        label={(selected ? "Remove trust: " : "Trust: ") + member.name}
+                        disabled={busy || state.status !== "connected"}
+                        onPress={() =>
+                          void act({
+                            type: "publish",
+                            input: {
+                              type: "set_auto_accept",
+                              policy: {
+                                remainingStarts: 0,
+                                trustedAuthorIds: selected
+                                  ? trusted.filter((id) => id !== member.id)
+                                  : [...trusted, member.id],
+                              },
+                            },
+                          })
+                        }
+                      />
+                    );
+                  })}
+              </View>
+              {self?.role === "admin" && (
+                <View className="gap-2">
+                  <Action
+                    label="Create invite"
+                    disabled={busy}
+                    onPress={() => void act({ type: "invite" })}
+                  />
+                  {invite && (
+                    <Text selectable>
+                      {new URL(
+                        `/join#token=${encodeURIComponent(invite.token)}`,
+                        state.url,
+                      ).toString()}
+                    </Text>
+                  )}
+                  <AdminInvites
+                    prepared={prepared}
+                    busy={busy}
+                    onRevoke={(inviteId) => void act({ type: "revokeInvite", inviteId })}
+                  />
+                </View>
+              )}
+              <View className="gap-2">
+                <Text className="font-t3-medium">Suggested tasks</Text>
+                {tasks.length === 0 && (
+                  <Text className="text-foreground-muted">No incoming tasks.</Text>
+                )}
+                {tasks.map((task) => {
+                  const turn = teamHubTaskTurn(task, snapshot.selfId);
+                  return (
+                    <View key={task.id} className="gap-2 rounded-xl bg-grouped-card p-3">
+                      <Text>{task.text}</Text>
+                      {task.status === "suggested" && task.autoStartAttempted && (
+                        <Text className="text-foreground-muted">
+                          Automatic start attempted. Accept manually to retry, or dismiss to cancel
+                          a pending start.
+                        </Text>
+                      )}
+                      {task.contract !== null && (
+                        <Text className="text-foreground-muted">
+                          Contract: {formatTeamHubContract(task.contract)}
+                        </Text>
+                      )}
+                      {turn === "agree" && (
+                        <Text className="text-foreground-muted">
+                          {memberName(task.assigneeId)} revised the contract. Agree so work can
+                          start, or ask your agent to revise it.
+                        </Text>
+                      )}
+                      {turn === "waiting" && (
+                        <Text className="text-foreground-muted">
+                          Waiting for {memberName(task.authorId)} to agree to the revised contract.
+                        </Text>
+                      )}
+                      {turn === "agree" ? (
+                        <View className="flex-row gap-2">
+                          <Action
+                            label="Agree"
+                            disabled={busy || state.status !== "connected"}
+                            onPress={() =>
+                              void act({
+                                type: "publish",
+                                input: {
+                                  type: "agree_contract",
+                                  taskId: task.id,
+                                  sha: task.contract?.sha ?? "",
+                                },
+                              })
+                            }
+                          />
+                        </View>
+                      ) : (
+                        <View className="flex-row gap-2">
+                          <Action
+                            label="Accept"
+                            disabled={busy || state.status !== "connected" || turn === "waiting"}
+                            onPress={() =>
+                              void act({
+                                type: "decideTask",
+                                taskId: task.id,
+                                decision: "accepted",
+                              })
+                            }
+                          />
+                          <Action
+                            label="Dismiss"
+                            disabled={busy}
+                            onPress={() =>
+                              void act({
+                                type: "decideTask",
+                                taskId: task.id,
+                                decision: "dismissed",
+                              })
+                            }
+                          />
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+              <View className="gap-1">
+                <Text className="font-t3-medium">Delegated work</Text>
+                <Text className="text-foreground-muted">
+                  Completed work is ready to fetch and integrate. Reopening keeps the original
+                  thread; ask the assignee to continue it.
+                </Text>
+                {delegatedTeamHubTasks(snapshot).map((task) => (
+                  <View key={task.id} className="gap-2 rounded-xl bg-grouped-card p-3">
+                    <Text>{task.text}</Text>
+                    {task.status === "suggested" && task.autoStartAttempted && (
+                      <Text className="text-foreground-muted">
+                        Automatic start attempted. Accept manually to retry, or dismiss to cancel a
+                        pending start.
+                      </Text>
+                    )}
+                    <Text className="text-foreground-muted">
+                      {memberName(task.assigneeId)} ·{" "}
+                      {task.status === "done" ? "Done" : "In progress"}
+                      {task.autoStarted ? " · Started automatically" : ""}
+                    </Text>
+                    {task.autoStarted &&
+                      task.threadId !== null &&
+                      task.assigneeId === snapshot.selfId && (
+                        <Action
+                          label="Open thread"
+                          disabled={false}
+                          onPress={() =>
+                            navigation.dispatch(
+                              CommonActions.navigate("Thread", {
+                                environmentId: prepared.environmentId,
+                                threadId: task.threadId,
+                              }),
+                            )
+                          }
+                        />
+                      )}
+                    {task.result !== null && (
+                      <>
+                        <Text>{task.result.description}</Text>
+                        <Text selectable className="text-foreground-muted">
+                          {task.result.branch} @ {task.result.sha}
+                        </Text>
+                      </>
+                    )}
+                    {task.status === "done" && (
+                      <Action
+                        label="Reopen"
+                        disabled={busy || state.status !== "connected"}
+                        onPress={() =>
+                          void act({
+                            type: "publish",
+                            input: { type: "reopen_task", taskId: task.id },
+                          })
+                        }
+                      />
+                    )}
+                  </View>
+                ))}
+              </View>
+              <View className="gap-1">
+                <Text className="font-t3-medium">Recent activity</Text>
+                {snapshot.summaries.slice(0, 10).map((summary) => (
+                  <Text key={summary.id}>
+                    {summary.description} · {summary.branch} · {summary.files.length} files
+                  </Text>
+                ))}
+              </View>
+              {snapshot.claims.length > 0 && (
+                <View className="gap-1">
+                  <Text className="font-t3-medium">File claims</Text>
+                  {snapshot.claims.map((claim) => (
+                    <Text key={claim.path}>
+                      {claim.path} ·{" "}
+                      {snapshot.members.find((member) => member.id === claim.memberId)?.name ??
+                        "Teammate"}
+                    </Text>
+                  ))}
+                </View>
+              )}
+              {snapshot.notes.length > 0 && (
+                <View className="gap-1">
+                  <Text className="font-t3-medium">Notes</Text>
+                  {snapshot.notes.slice(0, 10).map((note) => (
+                    <Text key={note.id}>{note.text}</Text>
+                  ))}
+                </View>
+              )}
+              <View className="gap-1">
+                <Text className="font-t3-medium">Interface changes</Text>
+                {snapshot.contractChanges.slice(0, 10).map((change) => (
+                  <Text key={change.id}>{change.description}</Text>
+                ))}
+              </View>
+            </>
+          )}
+          <Action label="Leave team" disabled={busy} onPress={() => void act({ type: "leave" })} />
+        </View>
+      )}
+      {error && (
+        <Text accessibilityRole="alert" className="text-destructive">
+          {error}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+export function SettingsTeamHubRouteScreen() {
+  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const prepared = usePreparedConnection(selectedTargets[0]?.environmentId ?? null);
+  return (
+    <SettingsScreen title="Team hub">
+      <ScrollView className="flex-1" contentContainerClassName="gap-4 px-5 py-4">
+        {Option.isSome(prepared) ? (
+          <TeamHubContent prepared={prepared.value} />
+        ) : (
+          <Text>Connect an environment to use a team hub.</Text>
+        )}
+      </ScrollView>
+    </SettingsScreen>
+  );
+}

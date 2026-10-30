@@ -1,0 +1,381 @@
+import * as Schema from "effect/Schema";
+import { ThreadId } from "./baseSchemas.ts";
+
+import { PortSchema } from "./baseSchemas.ts";
+
+export const TEAM_HUB_PROTOCOL_VERSION = 6;
+
+const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+const Id = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/));
+
+/** Repository path globs a member owns, such as `apps/api/**`. Used to route tasks. */
+export const TeamHubDomains = Schema.Array(Text).check(Schema.isMaxLength(20));
+
+/**
+ * What a member's agents are doing, as their own server last reported it. `provider` is the
+ * driver kind (`claudeAgent`, `codex`, ...) of the agent they ran most recently. The hub keeps
+ * this in memory only, so it survives reconnects but not a hub restart.
+ */
+export const TeamHubActivity = Schema.Struct({
+  provider: Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64))),
+  working: Schema.Boolean,
+});
+export type TeamHubActivity = typeof TeamHubActivity.Type;
+
+/** A finite allowance must be renewed by the member; completing work never refills it. */
+export const TeamHubAutoAccept = Schema.Struct({
+  trustedAuthorIds: Schema.Array(Id).check(Schema.isMaxLength(100)),
+  remainingStarts: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 0, maximum: 5 }),
+  ),
+});
+
+export type TeamHubAutoAccept = typeof TeamHubAutoAccept.Type;
+
+export const TeamHubMember = Schema.Struct({
+  id: Id,
+  name: Text,
+  role: Schema.Literals(["admin", "member"]),
+  online: Schema.Boolean,
+  domains: TeamHubDomains,
+  activity: TeamHubActivity,
+  autoAccept: Schema.optionalKey(TeamHubAutoAccept),
+});
+export type TeamHubMember = typeof TeamHubMember.Type;
+
+export const TeamHubSummary = Schema.Struct({
+  id: Id,
+  memberId: Id,
+  taskId: Schema.NullOr(Id),
+  branch: Schema.String,
+  files: Schema.Array(Schema.String),
+  description: Schema.String,
+  createdAt: Schema.Number,
+});
+export type TeamHubSummary = typeof TeamHubSummary.Type;
+
+const Sha = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
+
+/** Points at the contract file both sides build against, pinned to a pushed commit. */
+export const TeamHubContractRef = Schema.Struct({
+  branch: Text,
+  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+  sha: Sha,
+});
+export type TeamHubContractRef = typeof TeamHubContractRef.Type;
+
+/** The two sides of a contract task: the teammate who posted it and the one it went to. */
+export const TeamHubContractParty = Schema.Literals(["author", "assignee"]);
+export type TeamHubContractParty = typeof TeamHubContractParty.Type;
+
+/** A completed task points at pushed work; the hub never stores its code. */
+export const TeamHubTaskResult = Schema.Struct({
+  branch: Text,
+  sha: Sha,
+  description: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+});
+export type TeamHubTaskResult = typeof TeamHubTaskResult.Type;
+
+export const TeamHubTask = Schema.Struct({
+  id: Id,
+  authorId: Id,
+  assigneeId: Schema.NullOr(Id),
+  text: Text,
+  status: Schema.Literals(["suggested", "accepted", "dismissed", "done"]),
+  threadId: Schema.NullOr(ThreadId),
+  autoStartAttempted: Schema.optionalKey(Schema.Boolean),
+  autoStarted: Schema.optionalKey(Schema.Boolean),
+  result: Schema.NullOr(TeamHubTaskResult),
+  contract: Schema.NullOr(TeamHubContractRef),
+  /**
+   * Whose review the contract's current sha is waiting on. `null` means both sides agreed
+   * (or there is no contract). The assignee can only accept while it is not `author`.
+   */
+  contractAwaiting: Schema.NullOr(TeamHubContractParty),
+  createdAt: Schema.Number,
+});
+export type TeamHubTask = typeof TeamHubTask.Type;
+
+export const TeamHubNote = Schema.Struct({
+  id: Id,
+  memberId: Id,
+  text: Text,
+  createdAt: Schema.Number,
+});
+export type TeamHubNote = typeof TeamHubNote.Type;
+
+export const TeamHubClaim = Schema.Struct({
+  path: Text,
+  memberId: Id,
+  expiresAt: Schema.Number,
+});
+export type TeamHubClaim = typeof TeamHubClaim.Type;
+
+export const TeamHubContractChange = Schema.Struct({
+  id: Id,
+  memberId: Id,
+  description: Text,
+  paths: Schema.Array(Schema.String),
+  createdAt: Schema.Number,
+});
+export type TeamHubContractChange = typeof TeamHubContractChange.Type;
+
+export const TeamHubSnapshot = Schema.Struct({
+  team: Schema.Struct({ id: Id, name: Text, repo: Text }),
+  selfId: Id,
+  members: Schema.Array(TeamHubMember),
+  summaries: Schema.Array(TeamHubSummary),
+  tasks: Schema.Array(TeamHubTask),
+  notes: Schema.Array(TeamHubNote),
+  claims: Schema.Array(TeamHubClaim),
+  contractChanges: Schema.Array(TeamHubContractChange),
+});
+export type TeamHubSnapshot = typeof TeamHubSnapshot.Type;
+
+export const TeamHubState = Schema.Struct({
+  url: Schema.NullOr(Schema.String),
+  status: Schema.Literals(["disconnected", "connecting", "connected"]),
+  snapshot: Schema.NullOr(TeamHubSnapshot),
+  error: Schema.NullOr(Schema.String),
+});
+export type TeamHubState = typeof TeamHubState.Type;
+
+export const TeamHubJoinInput = Schema.Struct({
+  url: Text,
+  token: Text,
+  displayName: Text,
+});
+export type TeamHubJoinInput = typeof TeamHubJoinInput.Type;
+
+export const TeamHubBootstrapInput = Schema.Struct({
+  url: Text,
+  token: Text,
+  teamName: Text,
+  repo: Text,
+  displayName: Text,
+});
+export type TeamHubBootstrapInput = typeof TeamHubBootstrapInput.Type;
+
+/**
+ * How a hub on this machine is shared over Tailscale. `private` keeps it on the
+ * tailnet (Tailscale Serve); `public` publishes it to the internet (Funnel), so
+ * teammates need nothing installed.
+ */
+export const TeamHubExposure = Schema.Literals(["private", "public"]);
+export type TeamHubExposure = typeof TeamHubExposure.Type;
+
+/** Each reason has exactly one fix a person can do, which is what the UI offers. */
+export const TeamHubNetworkBlockedReason = Schema.Literals([
+  "not-installed",
+  "daemon-not-running",
+  "signed-out",
+  "stopped",
+  "awaiting-approval",
+  "https-disabled",
+  "funnel-not-allowed",
+]);
+export type TeamHubNetworkBlockedReason = typeof TeamHubNetworkBlockedReason.Type;
+
+export const TeamHubNetworkFailureReason = Schema.Literals([
+  "permission-denied",
+  "timed-out",
+  "command-failed",
+]);
+export type TeamHubNetworkFailureReason = typeof TeamHubNetworkFailureReason.Type;
+
+/**
+ * Where a hub running on the same machine as this server stands on Tailscale.
+ * `failed` only comes back from an expose or unexpose attempt, never from a read.
+ */
+export const TeamHubNetworkState = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("blocked"), reason: TeamHubNetworkBlockedReason }),
+  Schema.Struct({ status: Schema.Literal("no-hub"), hubPort: PortSchema }),
+  Schema.Struct({ status: Schema.Literal("ready"), hubPort: PortSchema }),
+  Schema.Struct({
+    status: Schema.Literal("exposed"),
+    servePort: PortSchema,
+    exposure: TeamHubExposure,
+    url: Schema.String,
+    // False while Tailscale is still issuing the HTTPS certificate.
+    reachable: Schema.Boolean,
+  }),
+  Schema.Struct({ status: Schema.Literal("conflict"), servePort: PortSchema }),
+  Schema.Struct({ status: Schema.Literal("failed"), reason: TeamHubNetworkFailureReason }),
+]);
+export type TeamHubNetworkState = typeof TeamHubNetworkState.Type;
+
+export const TeamHubNetworkInput = Schema.Struct({
+  hubPort: PortSchema,
+  servePort: PortSchema,
+  exposure: TeamHubExposure,
+});
+export type TeamHubNetworkInput = typeof TeamHubNetworkInput.Type;
+
+export const TeamHubCheckInput = Schema.Struct({ url: Text });
+export type TeamHubCheckInput = typeof TeamHubCheckInput.Type;
+
+/** Whether this machine can reach a hub address, and why not when Tailscale is the cause. */
+export const TeamHubReachability = Schema.Struct({
+  reachable: Schema.Boolean,
+  /** The address looks like a tailnet one (`*.ts.net` or 100.64.0.0/10). */
+  tailnetHost: Schema.Boolean,
+  blocked: Schema.NullOr(TeamHubNetworkBlockedReason),
+});
+export type TeamHubReachability = typeof TeamHubReachability.Type;
+
+export const TeamHubInvite = Schema.Struct({ id: Id, token: Text, expiresAt: Schema.Number });
+export type TeamHubInvite = typeof TeamHubInvite.Type;
+export const TeamHubInviteRecord = Schema.Struct({
+  id: Id,
+  expiresAt: Schema.Number,
+  usedAt: Schema.NullOr(Schema.Number),
+  revokedAt: Schema.NullOr(Schema.Number),
+});
+export type TeamHubInviteRecord = typeof TeamHubInviteRecord.Type;
+export const TeamHubRevokeInviteInput = Schema.Struct({ inviteId: Id });
+
+export const TeamHubUpdateRepoInput = Schema.Struct({ repo: Text });
+
+export const TeamHubSetDomainsInput = Schema.Struct({ domains: TeamHubDomains });
+
+export const TeamHubRemoveMemberInput = Schema.Struct({ memberId: Id });
+export const TeamHubTaskDecisionInput = Schema.Struct({
+  taskId: Id,
+  decision: Schema.Literals(["accepted", "dismissed"]),
+});
+export const TeamHubTaskDecisionResult = Schema.Struct({
+  threadId: Schema.NullOr(ThreadId),
+});
+
+export const TeamHubPublishSummary = Schema.Struct({
+  type: Schema.Literal("publish_summary"),
+  taskId: Schema.optional(Id),
+  branch: Schema.String.check(Schema.isMaxLength(256)),
+  files: Schema.Array(Schema.String.check(Schema.isMaxLength(512))).check(Schema.isMaxLength(200)),
+  description: Schema.String.check(Schema.isMaxLength(1000)),
+});
+export type TeamHubPublishSummary = typeof TeamHubPublishSummary.Type;
+
+export const TeamHubPostTask = Schema.Struct({
+  type: Schema.Literal("post_task"),
+  assigneeId: Schema.NullOr(Id),
+  text: Text,
+  contract: Schema.NullOr(TeamHubContractRef),
+});
+export type TeamHubPostTask = typeof TeamHubPostTask.Type;
+
+export const TeamHubPostNote = Schema.Struct({
+  type: Schema.Literal("post_note"),
+  text: Text,
+});
+export type TeamHubPostNote = typeof TeamHubPostNote.Type;
+
+export const TeamHubClaimFiles = Schema.Struct({
+  type: Schema.Literal("claim_files"),
+  paths: Schema.Array(Text).check(Schema.isMaxLength(50)),
+});
+export type TeamHubClaimFiles = typeof TeamHubClaimFiles.Type;
+
+export const TeamHubReleaseFiles = Schema.Struct({
+  type: Schema.Literal("release_files"),
+  paths: Schema.Array(Text).check(Schema.isMaxLength(50)),
+});
+export type TeamHubReleaseFiles = typeof TeamHubReleaseFiles.Type;
+
+export const TeamHubPostContractChange = Schema.Struct({
+  type: Schema.Literal("post_contract_change"),
+  description: Text,
+  paths: Schema.Array(Text).check(Schema.isMaxLength(50)),
+});
+export type TeamHubPostContractChange = typeof TeamHubPostContractChange.Type;
+
+export const TeamHubSetDomains = Schema.Struct({
+  type: Schema.Literal("set_domains"),
+  domains: TeamHubDomains,
+});
+export type TeamHubSetDomains = typeof TeamHubSetDomains.Type;
+
+/**
+ * Proposes a new commit of a suggested task's contract, on the same branch and path. Either
+ * side can revise; the other side then has to agree before work starts.
+ */
+export const TeamHubReviseContract = Schema.Struct({
+  type: Schema.Literal("revise_contract"),
+  taskId: Id,
+  sha: Sha,
+});
+export type TeamHubReviseContract = typeof TeamHubReviseContract.Type;
+
+/** Agrees to the contract commit the task is waiting on. `sha` guards against a newer revision. */
+export const TeamHubAgreeContract = Schema.Struct({
+  type: Schema.Literal("agree_contract"),
+  taskId: Id,
+  sha: Sha,
+});
+export type TeamHubAgreeContract = typeof TeamHubAgreeContract.Type;
+
+/** Replaces the sender's activity. Sent by the member's server whenever it changes. */
+export const TeamHubSetActivity = Schema.Struct({
+  type: Schema.Literal("set_activity"),
+  ...TeamHubActivity.fields,
+});
+export type TeamHubSetActivity = typeof TeamHubSetActivity.Type;
+
+export const TeamHubCompleteTask = Schema.Struct({
+  type: Schema.Literal("complete_task"),
+  taskId: Id,
+  result: TeamHubTaskResult,
+});
+
+export const TeamHubReopenTask = Schema.Struct({
+  type: Schema.Literal("reopen_task"),
+  taskId: Id,
+});
+
+export const TeamHubSetAutoAccept = Schema.Struct({
+  type: Schema.Literal("set_auto_accept"),
+  policy: TeamHubAutoAccept,
+});
+
+export const TeamHubClientMessage = Schema.Union([
+  TeamHubSetActivity,
+  TeamHubPublishSummary,
+  TeamHubPostTask,
+  TeamHubPostNote,
+  TeamHubClaimFiles,
+  TeamHubReleaseFiles,
+  TeamHubPostContractChange,
+  TeamHubSetDomains,
+  TeamHubSetAutoAccept,
+  TeamHubReviseContract,
+  TeamHubAgreeContract,
+  TeamHubCompleteTask,
+  TeamHubReopenTask,
+]);
+export type TeamHubClientMessage = typeof TeamHubClientMessage.Type;
+
+/**
+ * Matches a repository-relative path against a domain glob. `**` spans
+ * directories, `*` and `?` stay within one segment, and a trailing `/` owns
+ * everything below it.
+ */
+export function matchesDomain(path: string, glob: string): boolean {
+  const pattern = glob.endsWith("/") ? `${glob}**` : glob;
+  let source = "";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index]!;
+    if (char === "*" && pattern[index + 1] === "*") {
+      const slash = pattern[index + 2] === "/";
+      source += slash ? "(?:.*/)?" : ".*";
+      index += slash ? 2 : 1;
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else if (char === "?") {
+      source += "[^/]";
+    } else {
+      source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${source}$`).test(path.replace(/^\.?\//, ""));
+}
