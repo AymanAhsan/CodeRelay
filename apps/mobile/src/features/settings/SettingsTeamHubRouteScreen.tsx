@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
+  canManageTeamHubTasks,
   formatTeamHubContract,
   incomingTeamHubTasks,
+  queuedTeamHubTasksForOthers,
   delegatedTeamHubTasks,
   parseTeamHubDomains,
   parseTeamHubLink,
@@ -514,6 +516,51 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
                   );
                 })}
               </View>
+              {canManageTeamHubTasks(snapshot) && (
+                <View className="gap-2">
+                  <Text className="font-t3-medium">Queued for teammates</Text>
+                  <Text className="text-foreground-muted">
+                    As an admin you can move a queued task to someone else or take it yourself.
+                  </Text>
+                  {queuedTeamHubTasksForOthers(snapshot).map((task) => {
+                    const disabled = busy || state.status !== "connected";
+                    const reassign = (assigneeId: string) =>
+                      void act({
+                        type: "publish",
+                        input: { type: "reassign_task", taskId: task.id, assigneeId },
+                      });
+                    return (
+                      <View key={task.id} className="gap-2 rounded-xl bg-grouped-card p-3">
+                        <Text>{task.text}</Text>
+                        <Text className="text-foreground-muted">
+                          From {memberName(task.authorId)} · queued for{" "}
+                          {memberName(task.assigneeId)}
+                        </Text>
+                        <View className="flex-row flex-wrap gap-2">
+                          <Action
+                            label="Take"
+                            disabled={disabled}
+                            onPress={() => reassign(snapshot.selfId)}
+                          />
+                          {snapshot.members
+                            .filter(
+                              (member) =>
+                                member.id !== task.assigneeId && member.id !== snapshot.selfId,
+                            )
+                            .map((member) => (
+                              <Action
+                                key={member.id}
+                                label={`Move to ${member.name}${member.online ? "" : " (offline)"}`}
+                                disabled={disabled}
+                                onPress={() => reassign(member.id)}
+                              />
+                            ))}
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
               <View className="gap-1">
                 <Text className="font-t3-medium">Delegated work</Text>
                 <Text className="text-foreground-muted">

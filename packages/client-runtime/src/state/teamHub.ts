@@ -4,10 +4,13 @@ import type {
   TeamHubJoinInput,
   TeamHubBootstrapInput,
   TeamHubContractRef,
+  TeamHubMember,
   TeamHubNetworkInput,
   TeamHubSnapshot,
   TeamHubTask,
 } from "@t3tools/contracts/teamHub";
+import { matchesDomain, TEAM_HUB_TASK_TEXT_MAX_LENGTH } from "@t3tools/contracts/teamHub";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
 import { WS_METHODS, type ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -69,6 +72,132 @@ export function delegatedTeamHubTasks(snapshot: TeamHubSnapshot | null) {
         (task.authorId === snapshot.selfId || task.assigneeId === snapshot.selfId),
     ) ?? []
   );
+}
+
+/** Team admins can move queued tasks between teammates and take them for themselves. */
+export function canManageTeamHubTasks(snapshot: TeamHubSnapshot | null): boolean {
+  return (
+    snapshot?.members.some((member) => member.id === snapshot.selfId && member.role === "admin") ??
+    false
+  );
+}
+
+/** Suggested tasks queued for another teammate, oldest first. Only admins can act on them. */
+export function queuedTeamHubTasksForOthers(snapshot: TeamHubSnapshot | null) {
+  return (
+    snapshot?.tasks.filter(
+      (task) =>
+        task.status === "suggested" &&
+        task.assigneeId !== null &&
+        task.assigneeId !== snapshot.selfId,
+    ) ?? []
+  ).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+
+const EXPLICIT_HANDOFF =
+  /\b(hand(?:ing)?[\s-]?(?:it\s+|this\s+)?off|handoff|delegate|(?:assign|give|send|pass)\s+(?:this|it)\s+to)\b/i;
+
+/** The prompt already asks to hand work off, so the agent handles it with the team tools. */
+export function promptRequestsTeamHandoff(prompt: string): boolean {
+  return EXPLICIT_HANDOFF.test(prompt);
+}
+
+// Path segments that say nothing about who owns an area.
+const GENERIC_SEGMENTS = new Set([
+  "app",
+  "apps",
+  "packages",
+  "package",
+  "src",
+  "lib",
+  "libs",
+  "services",
+  "service",
+  "modules",
+  "internal",
+  "pkg",
+  "components",
+  "source",
+  "code",
+]);
+
+/** Words in a domain glob that a prompt might name, such as `api` for `apps/api/**`. */
+function domainKeywords(glob: string): string[] {
+  return glob
+    .split("/")
+    .filter((segment) => segment.length > 0 && !/[*?]/.test(segment))
+    .map((segment) => segment.replace(/\.[a-z0-9]+$/i, "").toLowerCase())
+    .flatMap((segment) => [segment, ...segment.split(/[-_.]/)])
+    .filter((word) => word.length >= 3 && !GENERIC_SEGMENTS.has(word));
+}
+
+export interface TeamHubHandoffCandidate {
+  readonly member: TeamHubMember;
+  /** The member's domains the prompt touches. Empty when nothing in the prompt matched. */
+  readonly matchedDomains: ReadonlyArray<string>;
+  readonly score: number;
+}
+
+/**
+ * Ranks teammates for taking a prompt by how much of it falls in their areas. A path in the
+ * prompt that a domain owns outweighs a word that only names the area. Online teammates come
+ * first among equals; offline ones stay listed because the hub keeps tasks until they return.
+ */
+export function rankTeamHubHandoffCandidates(
+  snapshot: TeamHubSnapshot,
+  prompt: string,
+): TeamHubHandoffCandidate[] {
+  const text = prompt.toLowerCase();
+  const paths = [...prompt.matchAll(/@?([\w.-]+(?:\/[\w.*-]+)+\/?)/g)].map((match) => match[1]!);
+  const words = new Set(text.split(/[^a-z0-9]+/).filter((word) => word.length > 0));
+  return snapshot.members
+    .filter((member) => member.id !== snapshot.selfId)
+    .map((member) => {
+      let score = 0;
+      const matchedDomains: string[] = [];
+      for (const glob of member.domains) {
+        const pathHits = paths.filter((path) => matchesDomain(path, glob)).length;
+        const keywordHits = new Set(domainKeywords(glob).filter((word) => words.has(word))).size;
+        if (pathHits + keywordHits === 0) continue;
+        score += pathHits * 3 + keywordHits;
+        matchedDomains.push(glob);
+      }
+      return { member, matchedDomains, score };
+    })
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Number(b.member.online) - Number(a.member.online) ||
+        a.member.name.localeCompare(b.member.name),
+    );
+}
+
+/**
+ * Teammates to offer a handoff to before sending a prompt to this member's own agent, or
+ * `null` when no offer fits: the hub is not connected, the project is not the team's
+ * repository, the prompt is too long for a task or already asks for a handoff, or no
+ * teammate's areas match it.
+ */
+export function teamHubHandoffOffer(
+  state: { readonly status: string; readonly snapshot: TeamHubSnapshot | null } | null,
+  projectRepositoryKey: string | null | undefined,
+  prompt: string,
+): TeamHubHandoffCandidate[] | null {
+  if (state?.status !== "connected" || state.snapshot === null) return null;
+  if (
+    !projectRepositoryKey ||
+    projectRepositoryKey !== normalizeGitRemoteUrl(state.snapshot.team.repo)
+  )
+    return null;
+  const text = prompt.trim();
+  if (
+    text.length === 0 ||
+    text.length > TEAM_HUB_TASK_TEXT_MAX_LENGTH ||
+    promptRequestsTeamHandoff(text)
+  )
+    return null;
+  const candidates = rankTeamHubHandoffCandidates(state.snapshot, prompt);
+  return candidates.some((candidate) => candidate.score > 0) ? candidates : null;
 }
 
 /** Turns the comma- or newline-separated "Your areas" text into domain globs. */

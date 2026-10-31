@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { TeamHubSnapshot, TeamHubTask } from "@t3tools/contracts/teamHub";
+import type { TeamHubMember, TeamHubSnapshot, TeamHubTask } from "@t3tools/contracts/teamHub";
 import {
+  canManageTeamHubTasks,
+  promptRequestsTeamHandoff,
+  queuedTeamHubTasksForOthers,
+  rankTeamHubHandoffCandidates,
+  teamHubHandoffOffer,
   formatTeamHubContract,
   incomingTeamHubTasks,
   delegatedTeamHubTasks,
@@ -139,5 +144,97 @@ describe("team hub domains and contracts", () => {
       sha: "1a2b3c4".padEnd(40, "0"),
     };
     expect(formatTeamHubContract(contract)).toBe("api/auth.yaml @ 1a2b3c4 (contract/login)");
+  });
+});
+
+describe("team handoff suggestions", () => {
+  const member = (id: string, overrides: Partial<TeamHubMember> = {}): TeamHubMember => ({
+    id,
+    name: id,
+    role: "member",
+    online: true,
+    domains: [],
+    activity: { provider: null, working: false },
+    ...overrides,
+  });
+  const snapshot = (
+    members: ReadonlyArray<TeamHubMember>,
+    tasks: TeamHubTask[] = [],
+  ): TeamHubSnapshot => ({
+    team: { id: "team", name: "Team", repo: "https://github.com/acme/app.git" },
+    selfId: "self",
+    members,
+    summaries: [],
+    tasks,
+    notes: [],
+    claims: [],
+    contractChanges: [],
+  });
+  const team = snapshot([
+    member("self", { domains: ["apps/web/**"] }),
+    member("Bob", { domains: ["apps/api/**"], online: false }),
+    member("Cara", { domains: ["apps/mobile/**", "packages/auth-kit/"] }),
+    member("Dan"),
+  ]);
+
+  it("ranks teammates by the areas a prompt names, keeping offline ones", () => {
+    const ranked = rankTeamHubHandoffCandidates(team, "Add a login endpoint to the api");
+    expect(ranked.map((candidate) => candidate.member.id)).toEqual(["Bob", "Cara", "Dan"]);
+    expect(ranked[0]).toMatchObject({ matchedDomains: ["apps/api/**"], score: 1 });
+    expect(ranked[1]?.score).toBe(0);
+  });
+
+  it("weights an owned path above a keyword", () => {
+    const ranked = rankTeamHubHandoffCandidates(
+      team,
+      "Fix the token refresh in packages/auth-kit/src/refresh.ts and the api client",
+    );
+    expect(ranked[0]).toMatchObject({ member: { id: "Cara" }, score: 5 });
+    expect(ranked[1]).toMatchObject({ member: { id: "Bob" }, score: 1 });
+  });
+
+  it("only offers a handoff for the team repository when a teammate's areas match", () => {
+    const connected = { status: "connected", snapshot: team };
+    const repo = "github.com/acme/app";
+    expect(teamHubHandoffOffer(connected, repo, "Update the api docs")?.[0]?.member.id).toBe("Bob");
+    expect(teamHubHandoffOffer(connected, repo, "Rename this variable")).toBeNull();
+    expect(teamHubHandoffOffer(connected, "github.com/acme/other", "Update the api")).toBeNull();
+    expect(teamHubHandoffOffer({ ...connected, status: "connecting" }, repo, "api")).toBeNull();
+    expect(teamHubHandoffOffer(connected, repo, "Hand this off to Bob: update the api")).toBeNull();
+  });
+
+  it("recognizes prompts that already ask for a handoff", () => {
+    expect(promptRequestsTeamHandoff("please delegate the api work")).toBe(true);
+    expect(promptRequestsTeamHandoff("assign this to Bob")).toBe(true);
+    expect(promptRequestsTeamHandoff("fix the offset handling")).toBe(false);
+  });
+
+  it("lists tasks queued for others and lets only admins manage them", () => {
+    const task = (id: string, assigneeId: string | null, status: TeamHubTask["status"]) =>
+      ({
+        id,
+        authorId: "Dan",
+        assigneeId,
+        text: id,
+        status,
+        threadId: null,
+        result: null,
+        contract: null,
+        contractAwaiting: null,
+        createdAt: 1,
+      }) satisfies TeamHubTask;
+    const state = snapshot(team.members, [
+      task("bob", "Bob", "suggested"),
+      task("mine", "self", "suggested"),
+      task("open", null, "suggested"),
+      task("started", "Bob", "accepted"),
+    ]);
+    expect(queuedTeamHubTasksForOthers(state).map((queued) => queued.id)).toEqual(["bob"]);
+    expect(canManageTeamHubTasks(state)).toBe(false);
+    expect(
+      canManageTeamHubTasks(
+        snapshot([member("self", { role: "admin" }), ...team.members.slice(1)]),
+      ),
+    ).toBe(true);
   });
 });

@@ -435,6 +435,7 @@ import {
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { IncomingTeamHubTask } from "./chat/IncomingTeamHubTask";
+import { ComposerTeamHandoff, type ComposerTeamHandoffHandle } from "./chat/ComposerTeamHandoff";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -4520,6 +4521,9 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
+  const teamHandoffRef = useRef<ComposerTeamHandoffHandle>(null);
+  // Set when the user chose to keep a prompt after the team handoff offer, so that send goes through.
+  const skipTeamHandoffRef = useRef(false);
   const queuedEditSaveInFlightRef = useRef(false);
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const queuedEditImageResources = useMemo(
@@ -8707,6 +8711,27 @@ export default function ChatView(props: ChatViewProps) {
 
       return;
     }
+    const skipTeamHandoff = skipTeamHandoffRef.current;
+    skipTeamHandoffRef.current = false;
+    // A plain prompt in a teammate's area can go to them instead. Attachments and contexts
+    // cannot ride along on a team task, so those always send here.
+    if (
+      !skipTeamHandoff &&
+      !directAnnotation &&
+      dispatchMode === "auto" &&
+      submissionIntent === "foreground" &&
+      multipleModelSelections === null &&
+      !(showPlanFollowUpPrompt && activeProposedPlan) &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      composerThreadContexts.length === 0 &&
+      teamHandoffRef.current?.offer(trimmed) === true
+    ) {
+      return;
+    }
     if (
       !directAnnotation &&
       sendInteractionModeEnabled &&
@@ -11210,26 +11235,54 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               isPreparingWorktree={isPreparingWorktree}
                               queuedRunsControl={
-                                isServerThread && activeThread ? (
-                                  <QueuedRunsControl
-                                    ref={queuedRunsControlRef}
-                                    steerShortcutLabel={shortcutLabelForCommand(
-                                      keybindings,
-                                      "thread.steerQueuedMessage",
-                                      { context: { terminalFocus: false } },
-                                    )}
-                                    editShortcutLabel={shortcutLabelForCommand(
-                                      keybindings,
-                                      "thread.editQueuedMessage",
-                                      { context: { composerFocus: true } },
-                                    )}
-                                    environmentId={activeThread.environmentId}
-                                    threadId={activeThread.id}
-                                    optimisticMessages={optimisticUserMessages}
-                                    editingRunId={editingQueuedRun?.runId ?? null}
-                                    onEditQueuedRun={beginEditingQueuedRun}
-                                    onCancelEdit={cancelEditingQueuedRun}
-                                  />
+                                activeThread ? (
+                                  <>
+                                    <ComposerTeamHandoff
+                                      ref={teamHandoffRef}
+                                      environmentId={activeThread.environmentId}
+                                      repositoryKey={
+                                        activeProject?.repositoryIdentity?.canonicalKey
+                                      }
+                                      onKeep={() => {
+                                        skipTeamHandoffRef.current = true;
+                                        void onSendRef.current();
+                                      }}
+                                      onHandedOff={(memberName) => {
+                                        promptRef.current = "";
+                                        clearComposerDraftContent(composerDraftTarget);
+                                        composerRef.current?.resetCursorState();
+                                        toastManager.add(
+                                          stackedThreadToast({
+                                            type: "success",
+                                            title: `Handed off to ${memberName}`,
+                                            description:
+                                              "They'll see it in their team tasks, now or when they're back online.",
+                                          }),
+                                        );
+                                      }}
+                                    />
+                                    {isServerThread ? (
+                                      <QueuedRunsControl
+                                        ref={queuedRunsControlRef}
+                                        steerShortcutLabel={shortcutLabelForCommand(
+                                          keybindings,
+                                          "thread.steerQueuedMessage",
+                                          { context: { terminalFocus: false } },
+                                        )}
+                                        editShortcutLabel={shortcutLabelForCommand(
+                                          keybindings,
+                                          "thread.editQueuedMessage",
+                                          { context: { composerFocus: true } },
+                                        )}
+                                        environmentId={activeThread.environmentId}
+                                        threadId={activeThread.id}
+                                        optimisticMessages={optimisticUserMessages}
+                                        editingRunId={editingQueuedRun?.runId ?? null}
+                                        onEditQueuedRun={beginEditingQueuedRun}
+                                        onCancelEdit={cancelEditingQueuedRun}
+                                      />
+                                    ) : null}
+                                  </>
                                 ) : null
                               }
                               bannerItems={composerBannerItems}

@@ -90,6 +90,52 @@ describe("team hub store", () => {
     }
   });
 
+  it("lets only admins move or take tasks queued for another teammate", () => {
+    const { store } = open();
+    try {
+      const admin = store.bootstrap(store.setupToken!, "Team", "repo", "Alice");
+      const alice = store.authenticate(admin.credential);
+      const join = (name: string) =>
+        store.authenticate(
+          store.join(store.createInvite(alice, alice.team_id).token, name).credential,
+        );
+      const bob = join("Bob");
+      const eve = join("Eve");
+      store.publish(eve, {
+        type: "post_task",
+        assigneeId: bob.id,
+        text: "Build API",
+        contract: null,
+      });
+      const taskId = store.snapshot(alice, new Set()).tasks[0]!.id;
+
+      expect(() =>
+        store.publish(eve, { type: "reassign_task", taskId, assigneeId: eve.id }),
+      ).toThrow("Only team admins");
+      expect(() => store.decideTask(eve, taskId, "accepted")).toThrow("Task unavailable");
+
+      store.publish(alice, { type: "reassign_task", taskId, assigneeId: eve.id });
+      expect(store.snapshot(alice, new Set()).tasks[0]?.assigneeId).toBe(eve.id);
+      expect(() => store.decideTask(bob, taskId, "accepted")).toThrow("Task unavailable");
+
+      // The admin takes it for themself, then accepts it like any assigned task.
+      store.publish(alice, { type: "reassign_task", taskId, assigneeId: alice.id });
+      expect(() =>
+        store.publish(alice, { type: "reassign_task", taskId, assigneeId: alice.id }),
+      ).toThrow("already queued");
+      store.decideTask(alice, taskId, "accepted");
+      expect(store.snapshot(alice, new Set()).tasks[0]).toMatchObject({
+        status: "accepted",
+        assigneeId: alice.id,
+      });
+      expect(() =>
+        store.publish(alice, { type: "reassign_task", taskId, assigneeId: bob.id }),
+      ).toThrow("Only queued tasks");
+    } finally {
+      store.close();
+    }
+  });
+
   it("bootstraps once and preserves the setup link across an interrupted first start", () => {
     const { dir, store } = open();
     const token = store.setupToken;
