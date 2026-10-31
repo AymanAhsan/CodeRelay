@@ -38,7 +38,7 @@ function handoffPage(response: NodeHttp.ServerResponse, kind: "setup" | "join") 
       "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
   });
   response.end(
-    `<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team hub ${kind}</title><main style="max-width:32rem;margin:4rem auto;font:16px system-ui;padding:0 1rem"><h1>${kind === "setup" ? "Set up your team hub" : "Join a team hub"}</h1><p>Open T3 Code, go to Settings → Integrations → Team hub, and paste this complete link${kind === "setup" ? " under Set up a hub" : " under Join team"}. The token after # stays in your browser until you paste it into T3 Code.</p><p>Keep this link private. It can be used once.</p></main></html>`,
+    `<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Team hub ${kind}</title><main style="max-width:32rem;margin:4rem auto;font:16px system-ui;padding:0 1rem"><h1>${kind === "setup" ? "Set up your team hub" : "Join a team hub"}</h1><p>Open CodeRelay, go to Settings → Integrations → Team hub, and paste this complete link${kind === "setup" ? " under Set up a hub" : " under Join team"}. The token after # stays in your browser until you paste it into CodeRelay.</p><p>Keep this link private. It can be used once.</p></main></html>`,
   );
 }
 
