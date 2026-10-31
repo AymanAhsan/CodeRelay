@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 
 /**
  * Electron half of the managed-auth boundary. The Electron provider statically
@@ -20,7 +21,11 @@ export default function ElectronManagedAuthShell({
 }) {
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
-      <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+      {hasCloudPublicConfig() ? (
+        <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+      ) : (
+        children
+      )}
     </ClerkProvider>
   );
 }

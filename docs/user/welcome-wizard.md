@@ -3,6 +3,13 @@
 T3 Code shows a setup flow when you open a new installation or connect to the
 hosted app for the first time. Existing workspaces skip this flow.
 
+Builds with CodeRelay accounts enabled offer optional registration for future cloud
+access. You can continue locally without an account. After signing in, choose
+whether to receive cloud early-access and product-update emails, then save your
+preference. You can change it later in the account menu under **CodeRelay Cloud**,
+or **Settings → CodeRelay account** on mobile. Registration does not upload your
+projects or conversations, and cloud hosting is not available yet.
+
 ## Connect your computers
 
 Select one or more computers to set up. If you opened T3 Code directly from a

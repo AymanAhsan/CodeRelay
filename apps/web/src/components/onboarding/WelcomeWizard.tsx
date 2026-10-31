@@ -35,7 +35,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { hasCloudPublicConfig, hasCodeRelayAccounts } from "../../cloud/publicConfig";
+import { CodeRelayAccount } from "../clerk/CodeRelayAccount";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
@@ -98,7 +99,7 @@ import { formatRelativeTime } from "../../timestampFormat";
  * re-runnable by clearing the flag.
  */
 
-type WizardStep = "connection" | "agents" | "import";
+type WizardStep = "account" | "connection" | "agents" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
@@ -116,7 +117,9 @@ export function WelcomeWizard({
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
   const completeOnboarding = useCompleteOnboarding();
-  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
+  const [step, setStep] = useState<WizardStep>(
+    resumeEnvironmentId ? "agents" : hasCodeRelayAccounts() ? "account" : "connection",
+  );
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
@@ -229,19 +232,28 @@ export function WelcomeWizard({
             </div>
           }
         >
-          <WizardSteps
-            steps={ONBOARDING_STAGES}
-            currentStep={stageIndex}
-            isStepDisabled={(index) => isImporting || index >= stageIndex}
-            onStepChange={(index) => {
-              if (isImporting || index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
-            }}
-          />
+          {step !== "account" ? (
+            <WizardSteps
+              steps={ONBOARDING_STAGES}
+              currentStep={stageIndex}
+              isStepDisabled={(index) => isImporting || index >= stageIndex}
+              onStepChange={(index) => {
+                if (isImporting || index > stageIndex) return;
+                setStep(index === 0 ? "connection" : "agents");
+              }}
+            />
+          ) : null}
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "connection" ? (
+          {step === "account" ? (
+            <div className="space-y-6">
+              <CodeRelayAccount />
+              <Button variant="outline" onClick={() => setStep("connection")}>
+                {localAvailable ? "Continue locally" : "Continue to connections"}
+              </Button>
+            </div>
+          ) : step === "connection" ? (
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
               selectedIds={selectedIds}

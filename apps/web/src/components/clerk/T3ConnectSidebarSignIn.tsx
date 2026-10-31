@@ -1,19 +1,24 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon } from "lucide-react";
+import { LogInIcon, MailIcon } from "lucide-react";
 
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import {
+  hasAccountPublicConfig,
+  hasCloudPublicConfig,
+  hasCodeRelayAccounts,
+} from "../../cloud/publicConfig";
+import { CodeRelayAccount } from "./CodeRelayAccount";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
 export function T3ConnectSidebarSignIn() {
-  if (!hasCloudPublicConfig()) return null;
+  if (!hasAccountPublicConfig()) return null;
 
   return <ConfiguredT3ConnectSidebarSignIn />;
 }
 
 export function T3ConnectSidebarAvatar() {
-  if (!hasCloudPublicConfig()) return null;
+  if (!hasAccountPublicConfig()) return null;
 
   return <ConfiguredT3ConnectSidebarAvatar />;
 }
@@ -32,7 +37,16 @@ function ConfiguredT3ConnectSidebarAvatar() {
         },
       }}
     >
-      {T3_CONNECT_ACCOUNT_PAGES.map((page) => (
+      {hasCodeRelayAccounts() ? (
+        <UserButton.UserProfilePage
+          label="CodeRelay Cloud"
+          url="coderelay-cloud"
+          labelIcon={<MailIcon className="size-4" />}
+        >
+          <CodeRelayAccount />
+        </UserButton.UserProfilePage>
+      ) : null}
+      {(hasCloudPublicConfig() ? T3_CONNECT_ACCOUNT_PAGES : []).map((page) => (
         <UserButton.UserProfilePage
           key={page.url}
           label={page.label}
@@ -58,7 +72,7 @@ function ConfiguredT3ConnectSidebarSignIn() {
         <SidebarMenuItem>
           <SidebarMenuButton onClick={openAuthPrompt}>
             <LogInIcon />
-            <span>Sign in to T3 Connect</span>
+            <span>{hasCodeRelayAccounts() ? "Sign in to CodeRelay" : "Sign in to T3 Connect"}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

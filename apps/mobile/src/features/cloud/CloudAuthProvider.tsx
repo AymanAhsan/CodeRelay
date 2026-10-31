@@ -199,20 +199,21 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
   const config = resolveCloudPublicConfig();
   const publishableKey = config.clerk.publishableKey;
   const relayUrl = config.relay.url;
+  const relayEnabled = Boolean(relayUrl && config.clerk.jwtTemplate);
 
   useEffect(() => {
-    if (!publishableKey || !relayUrl) {
+    if (!publishableKey || !relayEnabled) {
       deactivateCloudRelayAccount();
     }
-  }, [publishableKey, relayUrl]);
+  }, [publishableKey, relayEnabled]);
 
-  if (!publishableKey || !relayUrl) {
+  if (!publishableKey) {
     return props.children;
   }
 
   return (
     <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <CloudAuthBridge>{props.children}</CloudAuthBridge>
+      {relayEnabled ? <CloudAuthBridge>{props.children}</CloudAuthBridge> : props.children}
     </ClerkProvider>
   );
 }

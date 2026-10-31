@@ -6,7 +6,7 @@ import "./index.css";
 
 import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
 import { isElectron } from "./env";
-import { hasCloudPublicConfig } from "./cloud/publicConfig";
+import { hasAccountPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import {
   syncDocumentElectronPlatformClasses,
@@ -43,12 +43,13 @@ window.addEventListener("vite:preloadError", (event) => {
 
 const app = <AppRoot router={router} />;
 
-// Managed auth is cloud-only, and the Electron Clerk provider bundles the full
+// Accounts only need a Clerk key; remote access additionally needs relay config.
+// The Electron Clerk provider bundles the full
 // clerk-js runtime. Loading only the selected runtime as a split chunk keeps
 // every Clerk byte out of the startup graph for local-mode users, and keeps
 // the bundled clerk-js out of the browser build entirely.
 const managedAuthShellModule =
-  clerkPublishableKey && hasCloudPublicConfig()
+  clerkPublishableKey && hasAccountPublicConfig()
     ? isElectron
       ? import("./components/clerk/ElectronManagedAuthShell")
       : import("./components/clerk/BrowserManagedAuthShell")

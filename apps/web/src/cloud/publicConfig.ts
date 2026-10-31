@@ -74,6 +74,14 @@ export function hasCloudPublicConfig(): boolean {
   return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
 }
 
+export function hasAccountPublicConfig(): boolean {
+  return Boolean(resolveCloudPublicConfig().clerkPublishableKey);
+}
+
+export function hasCodeRelayAccounts(): boolean {
+  return hasAccountPublicConfig() && import.meta.env.VITE_CODERELAY_ACCOUNTS === "1";
+}
+
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {
