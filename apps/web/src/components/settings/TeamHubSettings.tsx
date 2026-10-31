@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  canManageTeamHubTasks,
   formatTeamHubContract,
+  queuedTeamHubTasksForOthers,
   parseTeamHubDomains,
   parseTeamHubLink,
   readTeamHubInvites,
@@ -35,6 +37,7 @@ import { Alert, AlertDescription } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -274,6 +277,7 @@ function ConnectedTeamHub({
   const snapshot = state.snapshot;
   const self = snapshot?.members.find((member) => member.id === snapshot.selfId);
   const pendingTasks = incomingTeamHubTasks(snapshot, { includeWaiting: true });
+  const queuedTasks = queuedTeamHubTasksForOthers(snapshot);
   const memberName = (memberId: string) =>
     snapshot?.members.find((member) => member.id === memberId)?.name ?? "Teammate";
 
@@ -820,6 +824,76 @@ function ConnectedTeamHub({
               </HubList>
             ) : null}
           </SettingsRow>
+          {canManageTeamHubTasks(snapshot) ? (
+            <SettingsRow
+              title="Queued for teammates"
+              description={
+                queuedTasks.length === 0
+                  ? "No tasks are waiting on teammates."
+                  : "As an admin you can move a queued task to someone else or take it yourself."
+              }
+            >
+              {queuedTasks.length > 0 ? (
+                <HubList>
+                  {queuedTasks.map((task) => {
+                    const assignee = snapshot.members.find(
+                      (member) => member.id === task.assigneeId,
+                    );
+                    const reassign = (assigneeId: string) =>
+                      void act({
+                        type: "publish",
+                        input: { type: "reassign_task", taskId: task.id, assigneeId },
+                      });
+                    const disabled = busy || state.status !== "connected";
+                    return (
+                      <HubListItem
+                        key={task.id}
+                        action={
+                          <>
+                            <Button
+                              size="xs"
+                              disabled={disabled}
+                              onClick={() => reassign(snapshot.selfId)}
+                            >
+                              Take
+                            </Button>
+                            <Menu>
+                              <MenuTrigger
+                                render={<Button size="xs" variant="outline" disabled={disabled} />}
+                              >
+                                Move to
+                              </MenuTrigger>
+                              <MenuPopup align="end">
+                                {snapshot.members
+                                  .filter(
+                                    (member) =>
+                                      member.id !== task.assigneeId &&
+                                      member.id !== snapshot.selfId,
+                                  )
+                                  .map((member) => (
+                                    <MenuItem key={member.id} onClick={() => reassign(member.id)}>
+                                      {member.name}
+                                      {member.online ? "" : " · offline"}
+                                    </MenuItem>
+                                  ))}
+                              </MenuPopup>
+                            </Menu>
+                          </>
+                        }
+                      >
+                        <p className="text-sm">{task.text}</p>
+                        <p className="text-xs text-muted-foreground">
+                          From {memberName(task.authorId)} · queued for{" "}
+                          {assignee?.name ?? "Teammate"}
+                          {assignee && !assignee.online ? " (offline)" : ""}
+                        </p>
+                      </HubListItem>
+                    );
+                  })}
+                </HubList>
+              ) : null}
+            </SettingsRow>
+          ) : null}
           <SettingsRow
             title="Delegated work"
             description="Completed work is ready to fetch and integrate. Reopening keeps the original thread; ask the assignee to continue it."

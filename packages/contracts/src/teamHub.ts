@@ -3,10 +3,20 @@ import { ThreadId } from "./baseSchemas.ts";
 
 import { PortSchema } from "./baseSchemas.ts";
 
-export const TEAM_HUB_PROTOCOL_VERSION = 6;
+export const TEAM_HUB_PROTOCOL_VERSION = 7;
 
 const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 const Id = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/));
+
+/**
+ * Task text can carry a whole prompt handed off from the composer. Kept modest because every
+ * snapshot resends every task.
+ */
+export const TEAM_HUB_TASK_TEXT_MAX_LENGTH = 2000;
+const TaskText = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(TEAM_HUB_TASK_TEXT_MAX_LENGTH),
+);
 
 /** Repository path globs a member owns, such as `apps/api/**`. Used to route tasks. */
 export const TeamHubDomains = Schema.Array(Text).check(Schema.isMaxLength(20));
@@ -81,7 +91,7 @@ export const TeamHubTask = Schema.Struct({
   id: Id,
   authorId: Id,
   assigneeId: Schema.NullOr(Id),
-  text: Text,
+  text: TaskText,
   status: Schema.Literals(["suggested", "accepted", "dismissed", "done"]),
   threadId: Schema.NullOr(ThreadId),
   autoStartAttempted: Schema.optionalKey(Schema.Boolean),
@@ -260,7 +270,7 @@ export type TeamHubPublishSummary = typeof TeamHubPublishSummary.Type;
 export const TeamHubPostTask = Schema.Struct({
   type: Schema.Literal("post_task"),
   assigneeId: Schema.NullOr(Id),
-  text: Text,
+  text: TaskText,
   contract: Schema.NullOr(TeamHubContractRef),
 });
 export type TeamHubPostTask = typeof TeamHubPostTask.Type;
@@ -333,6 +343,17 @@ export const TeamHubReopenTask = Schema.Struct({
   taskId: Id,
 });
 
+/**
+ * Moves a queued (`suggested`) task to another teammate, or to the sender to take it. Only team
+ * admins may move a task queued for someone else.
+ */
+export const TeamHubReassignTask = Schema.Struct({
+  type: Schema.Literal("reassign_task"),
+  taskId: Id,
+  assigneeId: Id,
+});
+export type TeamHubReassignTask = typeof TeamHubReassignTask.Type;
+
 export const TeamHubSetAutoAccept = Schema.Struct({
   type: Schema.Literal("set_auto_accept"),
   policy: TeamHubAutoAccept,
@@ -352,6 +373,7 @@ export const TeamHubClientMessage = Schema.Union([
   TeamHubAgreeContract,
   TeamHubCompleteTask,
   TeamHubReopenTask,
+  TeamHubReassignTask,
 ]);
 export type TeamHubClientMessage = typeof TeamHubClientMessage.Type;
 

@@ -33,7 +33,7 @@ const TeamInbox = Tool.make("team_inbox", {
   ...shared,
   description:
     "Read teammates, recent summaries, notes, and suggested tasks for this team's repository. Each teammate's domains are the repository path globs they own. " +
-    "Tasks include suggestions to you and tasks you posted or accepted, including completed work with its pushed branch and commit. A done task's result is ready to fetch and integrate; a turn ending alone does not mark it done.",
+    "Tasks include suggestions to you and tasks you posted or accepted (team admins also see every queued task), including completed work with its pushed branch and commit. A done task's result is ready to fetch and integrate; a turn ending alone does not mark it done.",
   success: Schema.Struct({
     members: Schema.Array(TeamHubMember),
     summaries: Schema.Array(TeamHubSummary),
@@ -120,6 +120,14 @@ const ReopenTask = Tool.make("team_reopen_task", {
   success: Schema.Struct({ sent: Schema.Boolean }),
 }).annotate(Tool.Destructive, false);
 
+const ReassignTask = Tool.make("team_reassign_task", {
+  ...shared,
+  description:
+    "Move a queued (suggested) task to another teammate, or pass your own member id to take it. Only team admins can move a task queued for someone else; the hub rejects it for other members. Offline teammates see the task when they reconnect.",
+  parameters: Schema.Struct({ taskId: Schema.String, assigneeId: Schema.String }),
+  success: Schema.Struct({ sent: Schema.Boolean }),
+}).annotate(Tool.Destructive, false);
+
 export const TeamHubToolkit = Toolkit.make(
   TeamInbox,
   TeamPost,
@@ -129,4 +137,5 @@ export const TeamHubToolkit = Toolkit.make(
   ListContractChanges,
   CompleteTask,
   ReopenTask,
+  ReassignTask,
 );

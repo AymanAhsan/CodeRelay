@@ -499,15 +499,29 @@ export class HubStore {
           .run(task.id);
         break;
       }
+      case "reassign_task": {
+        if (member.role !== "admin")
+          throw new HubError("Only team admins can move queued tasks", 403);
+        this.requireActiveMember(member.team_id, message.assigneeId);
+        const task = this.db
+          .prepare("SELECT * FROM tasks WHERE id=? AND team_id=?")
+          .get(message.taskId, member.team_id) as TaskRow | undefined;
+        if (!task) throw new HubError("Task unavailable", 404);
+        if (task.status !== "suggested") throw new HubError("Only queued tasks can be moved", 409);
+        if (task.auto_start_token !== null)
+          throw new HubError("This task is starting automatically. Dismiss it to cancel.", 409);
+        if (task.assignee_id === message.assigneeId)
+          throw new HubError("The task is already queued for that teammate", 409);
+        // A new assignee gets its own chance at an automatic start.
+        this.db
+          .prepare(
+            "UPDATE tasks SET assignee_id=?,auto_start_attempted=0 WHERE id=? AND status='suggested' AND auto_start_token IS NULL",
+          )
+          .run(message.assigneeId, task.id);
+        break;
+      }
       case "post_task":
-        if (
-          message.assigneeId &&
-          !this.db
-            .prepare("SELECT 1 FROM members WHERE id=? AND team_id=? AND revoked_at IS NULL")
-            .get(message.assigneeId, member.team_id)
-        ) {
-          throw new HubError("Assignee not in team", 400);
-        }
+        if (message.assigneeId) this.requireActiveMember(member.team_id, message.assigneeId);
         this.db
           .prepare(
             "INSERT INTO tasks (id,team_id,author_id,assignee_id,text,status,contract_json,contract_awaiting,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -621,6 +635,15 @@ export class HubStore {
         break;
       }
     }
+  }
+
+  private requireActiveMember(teamId: string, memberId: string) {
+    if (
+      !this.db
+        .prepare("SELECT 1 FROM members WHERE id=? AND team_id=? AND revoked_at IS NULL")
+        .get(memberId, teamId)
+    )
+      throw new HubError("Assignee not in team", 400);
   }
 
   private assignedTask(member: MemberRow, taskId: string) {

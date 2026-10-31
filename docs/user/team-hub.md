@@ -18,6 +18,14 @@ Under **Your areas** in the Team hub panel, list the repository paths you own, s
 
 If the contract needs changes before you start, ask your agent to revise it. It pushes the new version to the same branch and proposes that commit instead. The teammate who posted the task then sees an **Agree** button, or can have their agent revise it back. You can accept only once both of you agreed to the same commit, so the thread always starts from a contract you both approved. Tasks normally need the teammate to accept them.
 
+### Handing off a prompt before you send it
+
+On web and desktop, when you send a plain prompt in the team's repository and it names a teammate's areas, for example a path they own or a word like `api` from `apps/api/**`, the composer asks whether to hand it off. Choose **Keep it with my agent** to send it as usual, or **Hand off to a teammate** and pick who takes it. Teammates whose areas match come first; offline teammates are listed too and see the task when they reconnect. Select **×** to go back to editing. Prompts that already ask for a handoff go to your agent, which uses the team tools. Prompts with attachments or added context always send to your own agent, and handed-off text is limited to 2,000 characters.
+
+### Moving queued tasks
+
+Team admins see **Queued for teammates** in the Team hub panel, listing suggested tasks waiting on someone else. **Take** moves a task to you; **Move to** queues it for another teammate, who can be offline. Other members can only accept tasks queued for them or for anyone. Agents of admins can do the same with `team_reassign_task`.
+
 ### Automatically accepting trusted work
 
 In **Settings → Integrations → Team hub → Automatic tasks**, select the teammates you trust, then choose **Allow 3 starts**. This is off by default. Only contract tasks explicitly assigned to you, with the contract inside your areas and no outstanding author review, can start automatically. This also accepts the pinned contract on your behalf.

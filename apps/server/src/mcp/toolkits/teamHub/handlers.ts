@@ -47,6 +47,9 @@ export const TeamHubHandlersLive = TeamHubToolkit.toLayer({
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
       const current = yield* snapshot(caller.projectId);
+      const isAdmin = current.members.some(
+        (member) => member.id === current.selfId && member.role === "admin",
+      );
       return {
         members: current.members,
         summaries: current.summaries,
@@ -55,7 +58,7 @@ export const TeamHubHandlersLive = TeamHubToolkit.toLayer({
           (task) =>
             task.authorId === current.selfId ||
             task.assigneeId === current.selfId ||
-            (task.status === "suggested" && task.assigneeId === null),
+            (task.status === "suggested" && (task.assigneeId === null || isAdmin)),
         ),
       };
     }),
@@ -143,6 +146,16 @@ export const TeamHubHandlersLive = TeamHubToolkit.toLayer({
               new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
           ),
         );
+      return { sent: true };
+    }),
+  team_reassign_task: ({ taskId, assigneeId }) =>
+    Effect.gen(function* () {
+      const { caller } = yield* readMutationCaller();
+      const hub = yield* TeamHubService.TeamHubService;
+      yield* snapshot(caller.projectId);
+      yield* hub
+        .publish({ type: "reassign_task", taskId, assigneeId })
+        .pipe(Effect.mapError(unavailable));
       return { sent: true };
     }),
   claim_files: ({ paths, action }) =>
