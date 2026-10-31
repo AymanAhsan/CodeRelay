@@ -1,10 +1,12 @@
 {
+  "name": "CodeRelay",
+  "short_name": "CodeRelay",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#161616",
-  "theme_color": "#161616",
+  "background_color": "#1a1616",
+  "theme_color": "#1a1616",
   "icons": [
     {
       "src": "/favicon-32x32.png",

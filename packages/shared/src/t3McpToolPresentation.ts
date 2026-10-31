@@ -80,7 +80,7 @@ function tool(
   return { displayName, labels, icon, summaryAction };
 }
 
-const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
+const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code", "coderelay"]);
 
 // Cards, activity rows, summaries, and provider identity recovery share this inventory.
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
@@ -330,7 +330,8 @@ function resolveT3McpToolName(value: string): string | null {
     return namespaceMatch.groups.tool ?? null;
   }
 
-  const prefixed = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
+  const prefixed =
+    /^(?:mcp[-_]{1,2})?(?:t3[-_ ]?code|code[-_ ]?relay)(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
   const candidate = prefixed?.groups?.tool ?? label;
   return Object.hasOwn(T3_MCP_TOOLS, candidate) ? candidate : null;
 }

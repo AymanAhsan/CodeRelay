@@ -212,7 +212,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       rgb(0 0 0 / 18%) var(--chat-composer-attachment-overlap),
       transparent calc(var(--chat-composer-attachment-overlap) + 10px)
     );
-  --color-zinc-25: oklch(99.2% 0 0);
+  /* CodeRelay neutrals: Tailwind's zinc and neutral ramps re-tinted toward the
+     brand red (hue 20) at the site's low chroma, so every gray utility shares
+     the brand's warmth. */
+  --color-zinc-25: oklch(99.2% 0.001 20);
+  --color-zinc-50: oklch(98.4% 0.002 20);
+  --color-zinc-100: oklch(96.6% 0.003 20);
+  --color-zinc-200: oklch(91.9% 0.005 20);
+  --color-zinc-300: oklch(87% 0.007 20);
+  --color-zinc-400: oklch(70.5% 0.01 20);
+  --color-zinc-500: oklch(55.2% 0.01 20);
+  --color-zinc-600: oklch(44.2% 0.01 20);
+  --color-zinc-700: oklch(37% 0.01 20);
+  --color-zinc-800: oklch(27.4% 0.008 20);
+  --color-zinc-900: oklch(21% 0.008 20);
+  --color-zinc-950: oklch(14.1% 0.006 20);
+  --color-neutral-50: oklch(98.5% 0.002 20);
+  --color-neutral-100: oklch(97% 0.003 20);
+  --color-neutral-200: oklch(92.2% 0.004 20);
+  --color-neutral-300: oklch(87% 0.005 20);
+  --color-neutral-400: oklch(70.8% 0.008 20);
+  --color-neutral-500: oklch(55.6% 0.009 20);
+  --color-neutral-600: oklch(43.9% 0.009 20);
+  --color-neutral-700: oklch(37.1% 0.008 20);
+  --color-neutral-800: oklch(26.9% 0.007 20);
+  --color-neutral-900: oklch(20.5% 0.007 20);
+  --color-neutral-950: oklch(14.5% 0.006 20);
   --animate-skeleton: skeleton 2.4s infinite;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */
@@ -1107,7 +1132,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --card-foreground: var(--color-zinc-800);
   --popover: var(--color-white);
   --popover-foreground: var(--color-zinc-800);
-  --primary: oklch(0.488 0.217 264);
+  /* CodeRelay brand red, matching the site's --brand. */
+  --primary: oklch(0.55 0.18 20);
   --primary-foreground: var(--color-white);
   --secondary: var(--color-zinc-50);
   --secondary-foreground: var(--color-zinc-800);
@@ -1157,8 +1183,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
-  --terminal-cursor: rgb(38 56 78);
-  --terminal-selection-background: rgb(37 63 99 / 20%);
+  --terminal-cursor: oklch(0.3 0.03 20);
+  --terminal-selection-background: oklch(0.55 0.18 20 / 20%);
 
   @variant dark {
     color-scheme: dark;
@@ -1171,7 +1197,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
+    --primary: oklch(0.58 0.19 20);
     --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 3%);
@@ -1188,7 +1214,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --success-foreground: var(--color-emerald-400);
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
-    --update-foreground: var(--color-blue-400);
+    --update-foreground: oklch(0.74 0.15 20);
     --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-control-surface: var(--muted);
@@ -1196,8 +1222,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-row-active: var(--accent);
     --sidebar-row-selected: var(--muted);
     --sidebar-stage-fade: var(--card);
-    --terminal-cursor: rgb(180 203 255);
-    --terminal-selection-background: rgb(180 203 255 / 25%);
+    --terminal-cursor: oklch(0.82 0.09 20);
+    --terminal-selection-background: oklch(0.74 0.15 20 / 25%);
   }
 }
 
@@ -1227,13 +1253,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @variant dark {
     --background: #000;
-    --foreground: #f1f3f7;
+    --foreground: oklch(0.955 0.004 20);
     --card: #000;
     --card-foreground: var(--foreground);
-    --accent: #191a1d;
-    --accent-foreground: #f7f9ff;
-    --muted: #0a0a0a;
-    --muted-foreground: #a3a3a3;
+    --accent: oklch(0.215 0.008 20);
+    --accent-foreground: oklch(0.975 0.003 20);
+    --muted: oklch(0.155 0.006 20);
+    --muted-foreground: oklch(0.715 0.008 20);
     --border: rgb(255 255 255 / 8%);
     --input: rgb(255 255 255 / 18%);
     --sidebar: var(--card);
