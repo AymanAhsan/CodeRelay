@@ -17,6 +17,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { TeamHubInvite } from "@t3tools/contracts/teamHub";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -27,6 +28,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
 import { teamHubActionCommand, teamHubStateAtom } from "~/state/teamHub";
@@ -42,6 +44,10 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { HubAddressRow, HubConnectionCheck, HubLinkCheck, HubSharing } from "./TeamHubReach";
+import { TeamHubAreaPicker } from "./TeamHubAreaPicker";
+
+// Most areas a member can publish; the hub keeps only this many.
+const MAX_AREAS = 20;
 
 type HubReach = "public" | "private" | "other";
 
@@ -232,6 +238,8 @@ function ConnectedTeamHub({
   const [repoDraft, setRepoDraft] = useState("");
   const [editingAreas, setEditingAreas] = useState(false);
   const [areasDraft, setAreasDraft] = useState("");
+  const [areasSelection, setAreasSelection] = useState<ReadonlySet<string>>(new Set());
+  const projects = useProjects();
   const [invite, setInvite] = useState<TeamHubInvite | null>(null);
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -278,6 +286,16 @@ function ConnectedTeamHub({
   const self = snapshot?.members.find((member) => member.id === snapshot.selfId);
   const pendingTasks = incomingTeamHubTasks(snapshot, { includeWaiting: true });
   const queuedTasks = queuedTeamHubTasksForOthers(snapshot);
+  // A local checkout of the team's repository, used to pick areas from its files.
+  const repositoryKey = snapshot ? normalizeGitRemoteUrl(snapshot.team.repo) : null;
+  const teamProject = projects.find(
+    (project) =>
+      project.environmentId === prepared.environmentId &&
+      project.repositoryIdentity?.canonicalKey === repositoryKey,
+  );
+  const teamRoot = teamProject
+    ? (teamProject.repositoryIdentity?.rootPath ?? teamProject.workspaceRoot)
+    : null;
   const memberName = (memberId: string) =>
     snapshot?.members.find((member) => member.id === memberId)?.name ?? "Teammate";
 
@@ -601,6 +619,7 @@ function ConnectedTeamHub({
                   disabled={busy || state.status !== "connected"}
                   onClick={() => {
                     setAreasDraft(self?.domains.join("\n") ?? "");
+                    setAreasSelection(new Set(self?.domains));
                     setEditingAreas(true);
                   }}
                 >
@@ -616,21 +635,60 @@ function ConnectedTeamHub({
                   event.preventDefault();
                   void act({
                     type: "publish",
-                    input: { type: "set_domains", domains: parseTeamHubDomains(areasDraft) },
+                    input: {
+                      type: "set_domains",
+                      domains:
+                        teamRoot !== null ? [...areasSelection] : parseTeamHubDomains(areasDraft),
+                    },
                   });
                 }}
               >
-                <Textarea
-                  size="sm"
-                  aria-label="Your areas"
-                  placeholder={"apps/api/**\npackages/contracts/**"}
-                  value={areasDraft}
-                  disabled={busy}
-                  onChange={(event) => setAreasDraft(event.target.value)}
-                  autoFocus
-                />
+                {teamRoot !== null ? (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Press a file or folder to select it, or drag across rows to select several. A
+                      folder includes everything inside it.
+                    </p>
+                    <TeamHubAreaPicker
+                      environmentId={prepared.environmentId}
+                      cwd={teamRoot}
+                      areas={areasSelection}
+                      disabled={busy}
+                      onChange={setAreasSelection}
+                    />
+                    {areasSelection.size > MAX_AREAS ? (
+                      <p className="text-xs text-destructive">
+                        {areasSelection.size} areas selected. Choose at most {MAX_AREAS}; a parent
+                        folder covers everything inside it.
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Textarea
+                      size="sm"
+                      aria-label="Your areas"
+                      placeholder={"apps/api/**\npackages/contracts/**"}
+                      value={areasDraft}
+                      disabled={busy}
+                      onChange={(event) => setAreasDraft(event.target.value)}
+                      autoFocus
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Add the team's repository as a project to pick areas from its files.
+                    </p>
+                  </>
+                )}
                 <div className="flex gap-2">
-                  <Button type="submit" size="sm" disabled={busy || state.status !== "connected"}>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={
+                      busy ||
+                      state.status !== "connected" ||
+                      (teamRoot !== null && areasSelection.size > MAX_AREAS)
+                    }
+                  >
                     Save
                   </Button>
                   <Button
