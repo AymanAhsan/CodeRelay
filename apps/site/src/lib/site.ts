@@ -1,7 +1,5 @@
-export const FORK_REPOSITORY_URL = "https://github.com/AymanAhsan/t3code";
+export const REPOSITORY_URL = "https://github.com/AymanAhsan/CodeRelay";
 export const UPSTREAM_REPOSITORY_URL = "https://github.com/pingdotgg/t3code";
-
-export const RELEASES_URL = `${FORK_REPOSITORY_URL}/releases`;
-export const LATEST_RELEASE_URL = `${RELEASES_URL}/latest`;
-export const LATEST_RELEASE_API_URL =
-  "https://api.github.com/repos/AymanAhsan/t3code/releases/latest";
+export const QUICK_START_URL = `${REPOSITORY_URL}#quick-start`;
+export const TEAM_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/user/team-hub.md`;
+export const HOSTING_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/operations/team-hub.md`;

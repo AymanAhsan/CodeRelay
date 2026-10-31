@@ -465,7 +465,7 @@ a {
   font-weight: 620;
 }
 
-/* Roadmap */
+/* Handoff sequence */
 
 .steps {
   margin-top: clamp(2rem, 5vw, 3rem);
@@ -483,7 +483,7 @@ a {
 
 @media (min-width: 48rem) {
   .step {
-    grid-template-columns: 3.5rem minmax(0, 1fr) 7.5rem;
+    grid-template-columns: 3.5rem minmax(0, 1fr);
     column-gap: 1.5rem;
   }
 }
@@ -597,4 +597,46 @@ a {
 
 .site-footer a {
   text-underline-offset: 0.2em;
+}
+
+/* Setup instructions stay readable on narrow screens. */
+.setup-copy {
+  margin-top: 1rem;
+  max-width: var(--measure);
+  color: var(--muted);
+}
+
+.install-code {
+  margin: 1.25rem 0 0;
+  padding: 1.25rem;
+  background: var(--panel);
+  color: var(--panel-ink);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hero > *,
+.split > * {
+  min-width: 0;
+}
+
+.site-header,
+.header-nav {
+  flex-wrap: wrap;
+}
+
+.setup-copy a,
+.trust a {
+  text-underline-offset: 0.2em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
 }
