@@ -467,6 +467,7 @@ const config: ExpoConfig = {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },
     clerk: {
+      codeRelayAccounts: repoEnv.CODERELAY_ACCOUNTS === "1",
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
       jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
     },

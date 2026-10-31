@@ -78,6 +78,14 @@ export function hasCloudPublicConfig(): boolean {
   return Boolean(config.clerk.publishableKey && config.clerk.jwtTemplate && config.relay.url);
 }
 
+export function hasAccountPublicConfig(): boolean {
+  return Boolean(resolveCloudPublicConfig().clerk.publishableKey);
+}
+
+export function hasCodeRelayAccounts(): boolean {
+  return hasAccountPublicConfig() && Constants.expoConfig?.extra?.clerk?.codeRelayAccounts === true;
+}
+
 type Configured<T> = {
   readonly [Key in keyof T]: NonNullable<T[Key]>;
 };

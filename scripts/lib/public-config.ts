@@ -33,6 +33,26 @@ export function loadRepoEnv({
   const rootEnv = readEnvFile(NodePath.join(repoRoot, ".env"));
   const localEnv = readEnvFile(NodePath.join(repoRoot, ".env.local"));
   const config = resolvePublicConfig(baseEnv, localEnv, rootEnv);
+  const accountMode =
+    (baseEnv.CODERELAY_ACCOUNTS ?? localEnv.CODERELAY_ACCOUNTS ?? rootEnv.CODERELAY_ACCOUNTS) ===
+    "1";
+  if (accountMode) {
+    const key = config.clerkPublishableKey;
+    const hostname = key
+      ? Buffer.from(key.replace(/^pk_(test|live)_/, ""), "base64")
+          .toString("utf8")
+          .replace(/\$$/, "")
+          .toLowerCase()
+      : "";
+    if (!key || hostname === "t3.codes" || hostname.endsWith(".t3.codes")) {
+      throw new Error(
+        "CODERELAY_ACCOUNTS requires your own Clerk publishable key, not T3's account service.",
+      );
+    }
+    if (config.relayUrl && new URL(config.relayUrl).hostname === "relay.t3.codes") {
+      throw new Error("Remove T3's relay configuration before enabling CodeRelay accounts.");
+    }
+  }
 
   return {
     ...rootEnv,

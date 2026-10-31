@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cloud-account": {
+      "types": "./src/cloudAccount.ts",
+      "default": "./src/cloudAccount.ts"
+    },
     "./state/team-hub": {
       "types": "./src/state/teamHub.ts",
       "default": "./src/state/teamHub.ts"

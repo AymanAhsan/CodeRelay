@@ -15,6 +15,30 @@ afterEach(() => {
 });
 
 describe("loadRepoEnv", () => {
+  it("requires a fork-owned account service and rejects the upstream relay", () => {
+    const repoRoot = makeTemporaryDirectory();
+    const key = `pk_test_${Buffer.from("accounts.example.com$").toString("base64")}`;
+    const baseEnv = { CODERELAY_ACCOUNTS: "1", T3CODE_CLERK_PUBLISHABLE_KEY: key };
+    expect(loadRepoEnv({ baseEnv, repoRoot }).EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY).toBe(key);
+    expect(() => loadRepoEnv({ baseEnv: { CODERELAY_ACCOUNTS: "1" }, repoRoot })).toThrow(
+      "your own Clerk",
+    );
+    expect(() =>
+      loadRepoEnv({
+        baseEnv: {
+          ...baseEnv,
+          T3CODE_CLERK_PUBLISHABLE_KEY: `pk_live_${Buffer.from("clerk.t3.codes$").toString("base64")}`,
+        },
+        repoRoot,
+      }),
+    ).toThrow("your own Clerk");
+    expect(() =>
+      loadRepoEnv({
+        baseEnv: { ...baseEnv, T3CODE_RELAY_URL: "https://relay.t3.codes" },
+        repoRoot,
+      }),
+    ).toThrow("relay configuration");
+  });
   it("does not project cloud configuration for an unconfigured clone", () => {
     const env = loadRepoEnv({ baseEnv: {}, repoRoot: makeTemporaryDirectory() });
 

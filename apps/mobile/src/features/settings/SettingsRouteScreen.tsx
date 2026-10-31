@@ -5,7 +5,7 @@ import { Platform, View } from "react-native";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { hasAccountPublicConfig, hasCodeRelayAccounts } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -21,7 +21,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
-  const content = hasCloudPublicConfig() ? (
+  const content = hasAccountPublicConfig() ? (
     <ConfiguredSettingsRouteScreen />
   ) : (
     <LocalSettingsRouteScreen />
@@ -74,7 +74,7 @@ function ConfiguredSettingsRouteScreen() {
         <SettingsSection title="Connections">
           <SettingsRow
             icon="person.crop.circle"
-            label="T3 Account"
+            label={hasCodeRelayAccounts() ? "CodeRelay account" : "T3 Account"}
             value={accountLabel}
             disabled={!isLoaded}
             onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}

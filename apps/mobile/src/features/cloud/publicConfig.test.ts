@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import Constants from "expo-constants";
 
 import {
   CloudPublicConfigMissingError,
+  hasAccountPublicConfig,
+  hasCloudPublicConfig,
+  hasCodeRelayAccounts,
   hasTracingPublicConfig,
   resolveCloudPublicConfig,
   resolveRelayClerkTokenOptions,
@@ -16,6 +20,21 @@ vi.mock("expo-constants", () => ({
 }));
 
 describe("resolveCloudPublicConfig", () => {
+  it("allows CodeRelay accounts without activating relay features", () => {
+    const config = Constants.expoConfig!;
+    const previousExtra = config.extra;
+    try {
+      config.extra = { clerk: { publishableKey: "pk_test_example", codeRelayAccounts: true } };
+      expect(hasAccountPublicConfig()).toBe(true);
+      expect(hasCodeRelayAccounts()).toBe(true);
+      expect(hasCloudPublicConfig()).toBe(false);
+      config.extra = { clerk: { codeRelayAccounts: true } };
+      expect(hasAccountPublicConfig()).toBe(false);
+      expect(hasCodeRelayAccounts()).toBe(false);
+    } finally {
+      config.extra = previousExtra;
+    }
+  });
   it("reports the missing Clerk JWT template as structured configuration", () => {
     expect(() => resolveRelayClerkTokenOptions()).toThrowError(
       new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" }),
