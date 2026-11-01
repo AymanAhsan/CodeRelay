@@ -1,0 +1,129 @@
+# Builds the unsigned Windows x64 installer from main and keeps it published at a
+# fixed URL, so the site can link to the newest build without knowing a version:
+#
+#   https://github.com/<owner>/<repo>/releases/download/main-latest/CodeRelay-windows-x64.exe
+#
+# Pull requests that touch this workflow build the installer to prove it still
+# works, but only pushes to main (and manual runs on main) publish it.
+name: Desktop Windows Latest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/desktop-windows-latest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer main push supersedes an older build still in flight.
+concurrency:
+  group: desktop-windows-latest-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: true
+
+env:
+  RELEASE_TAG: main-latest
+  INSTALLER_NAME: CodeRelay-windows-x64.exe
+
+jobs:
+  build:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      # The resource monitor build needs the Spectre-mitigated MSVC libraries.
+      - name: Install Spectre-mitigated MSVC libs
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      # No WSL runtime is passed, so the installer ships without the embedded
+      # Linux CLI archive; the Windows-native backend is unaffected.
+      - name: Build installer
+        shell: bash
+        run: |
+          node scripts/build-desktop-artifact.ts \
+            --platform win --target nsis --arch x64 \
+            --build-version "0.0.0-main.${{ github.run_number }}" \
+            --verbose
+
+      - name: Name the installer
+        shell: bash
+        run: |
+          installer="$(ls release/*.exe | head -n 1)"
+          test -n "$installer"
+          mkdir -p dist-installer
+          cp "$installer" "dist-installer/${INSTALLER_NAME}"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist-installer/${{ env.INSTALLER_NAME }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish latest release
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist-installer
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Unsigned Windows installer built from main at ${GITHUB_SHA}."
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Latest main build" --notes "$notes"
+          fi
+          gh release upload "$RELEASE_TAG" "dist-installer/${INSTALLER_NAME}" \
+            --repo "$GITHUB_REPOSITORY" --clobber
