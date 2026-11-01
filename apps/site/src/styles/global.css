@@ -465,7 +465,25 @@ a {
   font-weight: 620;
 }
 
-/* Handoff sequence */
+/* Handoff recording and sequence */
+
+.handoff-demo {
+  margin-top: clamp(1.5rem, 4vw, 2.5rem);
+}
+
+.handoff-demo video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+}
+
+.handoff-demo a {
+  text-underline-offset: 0.2em;
+}
 
 .steps {
   margin-top: clamp(2rem, 5vw, 3rem);
