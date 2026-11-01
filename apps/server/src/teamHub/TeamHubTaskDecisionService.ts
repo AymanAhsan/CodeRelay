@@ -14,6 +14,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -144,13 +145,24 @@ const make = Effect.gen(function* () {
     }
 
     const canonicalKey = normalizeGitRemoteUrl(snapshot.team.repo);
-    const shells = yield* projects
-      .listShells()
-      .pipe(
-        Effect.mapError(
-          (cause) => new TeamHubTaskDecisionError({ reason: "project_lookup_failed", cause }),
+    // Listed shells carry only cached identities; await the missing ones so a fresh clone matches.
+    const shells = yield* projects.listShells().pipe(
+      Effect.flatMap((listed) =>
+        Effect.forEach(
+          listed,
+          (shell) =>
+            shell.repositoryIdentity
+              ? Effect.succeed(shell)
+              : projects
+                  .getShell(shell.id, { resolveRepositoryIdentity: true })
+                  .pipe(Effect.map(Option.getOrElse(() => shell))),
+          { concurrency: 4 },
         ),
-      );
+      ),
+      Effect.mapError(
+        (cause) => new TeamHubTaskDecisionError({ reason: "project_lookup_failed", cause }),
+      ),
+    );
     const matches = shells.filter(
       (project) => project.repositoryIdentity?.canonicalKey === canonicalKey,
     );
