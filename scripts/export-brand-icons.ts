@@ -15,6 +15,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/brand-assets.ts";
 import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
+import { renderCodeRelayWindowsIcon } from "./lib/windows-brand-icon.ts";
 
 const DESIGN_GENERATION = 26;
 const ICON_COMPOSER_EXECUTABLE_PARTS = [
@@ -595,6 +596,14 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     try: () => encodePngIco(icoRenditions),
     catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
   });
+  const windowsIco =
+    variant.label === "development"
+      ? ico
+      : yield* Effect.tryPromise({
+          try: () =>
+            renderCodeRelayWindowsIcon(path.join(repositoryRoot, "apps/site/public/favicon.svg")),
+          catch: (cause) => new IconExportEncodingError({ variant: variant.label, cause }),
+        });
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
@@ -603,7 +612,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.favicon16, yield* render("iOS", 16)],
     [variant.outputs.favicon32, yield* render("iOS", 32)],
     [variant.outputs.faviconIco, ico],
-    [variant.outputs.windowsIco, ico],
+    [variant.outputs.windowsIco, windowsIco],
   ]);
 });
 

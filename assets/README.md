@@ -1,12 +1,14 @@
 # Brand icons
 
-The three Icon Composer projects are the source of truth for full application icons:
+The three Icon Composer projects supply application icons, except for the production and nightly Windows icons:
 
 - `dev/app-icon.icon`
 - `nightly/app-icon.icon`
 - `prod/app-icon.icon`
 
 Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
+
+Production and nightly Windows icons use the CodeRelay mark from `apps/site/public/favicon.svg`. The export script renders it into a multi-resolution ICO for the executable, Start menu shortcuts, and installer. The existing Windows asset filenames are retained for compatibility with desktop resource lookup.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
