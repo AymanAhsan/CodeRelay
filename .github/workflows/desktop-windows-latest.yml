@@ -18,10 +18,12 @@ on:
 permissions:
   contents: read
 
-# A newer main push supersedes an older build still in flight.
+# Serialize releases so a manifest cannot race another build's asset uploads.
 concurrency:
   group: desktop-windows-latest-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
-  cancel-in-progress: true
+  # Let publishing finish: cancellation between installer and manifest uploads
+  # can leave clients with an incomplete update. Pending runs still coalesce.
+  cancel-in-progress: false
 
 env:
   RELEASE_TAG: main-latest
@@ -93,19 +95,24 @@ jobs:
             --build-version "0.0.0-main.${{ github.run_number }}" \
             --verbose
 
-      - name: Name the installer
+      - name: Stage installer and update feed
         shell: bash
         run: |
           installer="$(ls release/*.exe | head -n 1)"
           test -n "$installer"
           mkdir -p dist-installer
+          # Keep versioned assets for clients that already fetched an older
+          # manifest, as well as the fixed filename used by the website.
+          cp "$installer" dist-installer/
           cp "$installer" "dist-installer/${INSTALLER_NAME}"
+          cp release/*.blockmap dist-installer/
+          cp release/latest.yml dist-installer/
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: dist-installer/${{ env.INSTALLER_NAME }}
+          path: dist-installer/
           if-no-files-found: error
 
   publish:
@@ -134,5 +141,8 @@ jobs:
               --target "$GITHUB_SHA" --prerelease \
               --title "Latest main build" --notes "$notes"
           fi
-          gh release upload "$RELEASE_TAG" "dist-installer/${INSTALLER_NAME}" \
+          # Publish the manifest last so it only advertises downloadable assets.
+          gh release upload "$RELEASE_TAG" dist-installer/*.exe dist-installer/*.blockmap \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" dist-installer/latest.yml \
             --repo "$GITHUB_REPOSITORY" --clobber
