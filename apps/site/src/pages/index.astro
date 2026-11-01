@@ -1,6 +1,6 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { REPOSITORY_URL, UPSTREAM_REPOSITORY_URL, QUICK_START_URL, TEAM_GUIDE_URL, HOSTING_GUIDE_URL } from "../lib/site";
+import { REPOSITORY_URL, UPSTREAM_REPOSITORY_URL, WINDOWS_INSTALLER_URL, SOURCE_ZIP_URL, QUICK_START_URL, TEAM_GUIDE_URL, HOSTING_GUIDE_URL } from "../lib/site";
 
 const handoff = [
   { time: "09:41", who: "alice", verb: "owns", detail: "apps/web/**" },
@@ -42,10 +42,10 @@ const handoff = [
           branch, and commit for you to integrate.
         </p>
         <div class="button-row">
-          <a class="button button--primary" href="#get-started">Try the local demo</a>
-          <a class="button button--secondary" href={REPOSITORY_URL}>View CodeRelay on GitHub</a>
+          <a class="button button--primary" href={WINDOWS_INSTALLER_URL}>Download for Windows</a>
+          <a class="button button--secondary" href="#get-started">Try the local demo</a>
         </div>
-        <p class="fine">Open source under the MIT license. Bring your existing agent provider and subscription.</p>
+        <p class="fine">Windows 10 or later, 64-bit. The installer is unsigned, so Windows may ask you to confirm before it runs. Open source under the MIT license. Bring your existing agent provider and subscription.</p>
       </div>
       <figure>
         <div class="feed" role="group" aria-label="Illustrated example of an Alice-to-Bob task handoff">
@@ -134,6 +134,7 @@ const handoff = [
 cd CodeRelay
 vp i
 vp run dev:team</code></pre>
+            <p class="setup-copy">Prefer not to use Git? <a href={SOURCE_ZIP_URL}>Download the latest source</a> as a zip, unzip it, and run <code>vp i</code> then <code>vp run dev:team</code> inside the folder.</p>
           </div>
           <div>
             <h3>Give Alice and Bob a task</h3>
