@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { hasCloudPublicConfig, hasCodeRelayAccounts } from "../../cloud/publicConfig";
+import { RequireCodeRelaySignIn } from "./RequireCodeRelaySignIn";
 
 /**
  * Browser half of the managed-auth boundary, loaded lazily from the entry so
@@ -18,12 +19,18 @@ export default function BrowserManagedAuthShell({
   readonly publishableKey: string;
   readonly children: ReactNode;
 }) {
+  const gated = hasCodeRelayAccounts() ? (
+    <RequireCodeRelaySignIn>{children}</RequireCodeRelaySignIn>
+  ) : (
+    children
+  );
+
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey}>
       {hasCloudPublicConfig() ? (
-        <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+        <ManagedRelayAuthProvider>{gated}</ManagedRelayAuthProvider>
       ) : (
-        children
+        gated
       )}
     </ClerkProvider>
   );

@@ -27,10 +27,15 @@ Build configuration rejects CodeRelay account mode with the known T3 Clerk domai
 or T3 relay. Rebuild web, desktop, and mobile after changing configuration.
 
 With only your Clerk key, account sign-in is available but relay features stay
-disabled. `CODERELAY_ACCOUNTS=1` adds the optional web/desktop welcome step and
-CodeRelay account preferences on all clients. Mobile exposes the introduction
-through Settings → CodeRelay account. Without a key, local mode loads no Clerk
-provider. Setting the flag to `0` removes the early-access onboarding.
+disabled. `CODERELAY_ACCOUNTS=1` makes web and desktop require a signed-in Clerk
+session before the app renders, and adds CodeRelay account preferences on all
+clients. Mobile does not require sign-in; it exposes the introduction through
+Settings → CodeRelay account. Without a key, local mode loads no Clerk provider.
+Setting the flag to `0` removes the sign-in requirement and early-access onboarding.
+
+The published Windows installer (`desktop-windows-latest.yml`) reads the key from
+the `CLERK_PUBLISHABLE_KEY` repository variable and fails if it is missing, since
+the key is baked into the bundle at build time.
 
 ## User data and email preferences
 
