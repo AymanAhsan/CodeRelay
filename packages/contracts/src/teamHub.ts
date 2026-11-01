@@ -225,6 +225,73 @@ export type TeamHubNetworkInput = typeof TeamHubNetworkInput.Type;
 export const TeamHubCheckInput = Schema.Struct({ url: Text });
 export type TeamHubCheckInput = typeof TeamHubCheckInput.Type;
 
+/** The image `apps/hub/Dockerfile` builds, as the self-hosting guide names it. */
+export const TEAM_HUB_DOCKER_IMAGE = "t3-team-hub";
+export const TEAM_HUB_DEFAULT_CONTAINER_NAME = "t3-team-hub";
+
+/** Docker's own rule for container names, so a bad name is refused before Docker runs. */
+export const TeamHubContainerName = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/),
+);
+
+export const TeamHubStartInput = Schema.Struct({
+  hubPort: PortSchema,
+  name: TeamHubContainerName,
+});
+export type TeamHubStartInput = typeof TeamHubStartInput.Type;
+
+/**
+ * The `docker` arguments that start a hub. Server and client share them so the
+ * command a person copies is exactly the one the app runs. Each name gets its own
+ * data volume, so two hubs never share one database.
+ */
+export function teamHubDockerRunArgs(input: TeamHubStartInput): ReadonlyArray<string> {
+  return [
+    "run",
+    "-d",
+    "--pull",
+    "never",
+    "--name",
+    input.name,
+    "-p",
+    `${String(input.hubPort)}:8080`,
+    "-v",
+    `${input.name}-data:/data`,
+    TEAM_HUB_DOCKER_IMAGE,
+  ];
+}
+
+/** Each reason picks the hint shown beside Docker's own message. */
+export const TeamHubStartFailureReason = Schema.Literals([
+  "docker-not-installed",
+  "docker-not-running",
+  "image-missing",
+  "name-in-use",
+  "port-in-use",
+  "timed-out",
+  "command-failed",
+]);
+export type TeamHubStartFailureReason = typeof TeamHubStartFailureReason.Type;
+
+export const TeamHubStartResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("started"),
+    name: TeamHubContainerName,
+    /** Where the hub answers on this computer. */
+    address: Schema.String,
+    /** Printed only by a hub with no team yet; null when its volume already holds one. */
+    setupLink: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("failed"),
+    reason: TeamHubStartFailureReason,
+    /** What Docker printed, trimmed. Empty when Docker never ran. */
+    output: Schema.String,
+  }),
+]);
+export type TeamHubStartResult = typeof TeamHubStartResult.Type;
+
 /** Whether this machine can reach a hub address, and why not when Tailscale is the cause. */
 export const TeamHubReachability = Schema.Struct({
   reachable: Schema.Boolean,

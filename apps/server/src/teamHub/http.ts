@@ -11,6 +11,7 @@ import {
   failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import * as TeamHubDocker from "./TeamHubDocker.ts";
 import * as TeamHubNetwork from "./TeamHubNetwork.ts";
 import * as TeamHubService from "./TeamHubService.ts";
 import * as TeamHubTaskDecisionService from "./TeamHubTaskDecisionService.ts";
@@ -21,6 +22,7 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const hub = yield* TeamHubService.TeamHubService;
     const network = yield* TeamHubNetwork.TeamHubNetwork;
+    const docker = yield* TeamHubDocker.TeamHubDocker;
     const taskDecisions = yield* TeamHubTaskDecisionService.TeamHubTaskDecisionService;
     const state = hub.state;
     return handlers
@@ -158,6 +160,13 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("teamHub.unexposeHub")(function* ({ payload }) {
           yield* requireEnvironmentScope(AuthAccessWriteScope);
           return yield* network.unexpose(payload);
+        }),
+      )
+      .handle(
+        "startHub",
+        Effect.fn("teamHub.startHub")(function* ({ payload }) {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          return yield* docker.start(payload);
         }),
       )
       .handle(

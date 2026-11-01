@@ -2,8 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { readTeamHubNetworkState } from "@t3tools/client-runtime/state/team-hub";
 import {
+  TEAM_HUB_DEFAULT_CONTAINER_NAME,
   TeamHubNetworkState,
   TeamHubReachability,
+  TeamHubStartResult,
   type TeamHubExposure,
   type TeamHubNetworkInput,
 } from "@t3tools/contracts/teamHub";
@@ -38,9 +40,11 @@ import {
   DEFAULT_HUB_PORT,
   DEFAULT_SHARE_PORT,
   isTailscaleShareUrl,
+  isValidContainerName,
   normalizeHubAddress,
   presentNetworkState,
   presentReachability,
+  presentStartFailure,
   servePortOfUrl,
   shareCommand,
   type ReachPresentation,
@@ -48,6 +52,7 @@ import {
 
 const isNetworkState = Schema.is(TeamHubNetworkState);
 const isReachability = Schema.is(TeamHubReachability);
+const isStartResult = Schema.is(TeamHubStartResult);
 
 const TONE_ICON = {
   info: InfoIcon,
@@ -343,6 +348,142 @@ function ManualHubAddress({
   );
 }
 
+type StartedHub = Extract<TeamHubStartResult, { status: "started" }>;
+type StartFailure = Extract<TeamHubStartResult, { status: "failed" }>;
+
+/**
+ * Starts the hub container with Docker on the machine this server runs on, the
+ * same machine Tailscale shares it from. Docker's refusals are shown with its
+ * own message, plus the one thing to do about each.
+ */
+function HubStart({
+  prepared,
+  hubPort,
+  name,
+  onName,
+  onStarted,
+}: {
+  prepared: PreparedConnection;
+  hubPort: number;
+  name: string;
+  onName: (name: string) => void;
+  onStarted: (started: StartedHub) => void;
+}) {
+  const command = useAtomCommand(teamHubActionCommand, { reportFailure: false });
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<{
+    readonly result: StartFailure;
+    readonly input: { readonly hubPort: number; readonly name: string };
+  } | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const validName = isValidContainerName(name);
+
+  const start = async () => {
+    if (!validName || busy) return;
+    const input = { hubPort, name };
+    setBusy(true);
+    setFailure(null);
+    setRequestError(null);
+    const outcome = await command({ prepared, action: { type: "startHub", input } });
+    setBusy(false);
+    if (!AsyncResult.isSuccess(outcome) || !isStartResult(outcome.value)) {
+      setRequestError(REQUEST_FAILED);
+      return;
+    }
+    if (outcome.value.status === "failed") {
+      setFailure({ result: outcome.value, input });
+      return;
+    }
+    onStarted(outcome.value);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1 text-xs">
+          Container name
+          <div className="w-48">
+            <Input
+              size="sm"
+              font="mono"
+              value={name}
+              aria-invalid={!validName}
+              onChange={(event) => {
+                onName(event.target.value.trim());
+                setFailure(null);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void start();
+                }
+              }}
+            />
+          </div>
+        </label>
+        <Button size="xs" disabled={busy || !validName} onClick={() => void start()}>
+          {busy ? (
+            <>
+              <Spinner size="sm" />
+              Starting…
+            </>
+          ) : (
+            "Start hub"
+          )}
+        </Button>
+      </div>
+      {validName ? null : (
+        <p role="alert" className="text-xs text-destructive">
+          Use letters, digits, and _ . - only, starting with a letter or digit.
+        </p>
+      )}
+      {requestError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {requestError}
+        </p>
+      ) : null}
+      {failure ? (
+        <ReachNotice
+          presentation={presentStartFailure(failure.result, failure.input)}
+          onRetry={() => void start()}
+        >
+          {failure.result.output.length > 0 ? (
+            <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-all whitespace-pre-wrap">
+              {failure.result.output}
+            </pre>
+          ) : null}
+        </ReachNotice>
+      ) : null}
+    </div>
+  );
+}
+
+/** Confirms a hub the app just started: where it answers, and whether it printed a setup link. */
+function StartedHubNotice({ started }: { started: StartedHub }) {
+  return (
+    <Alert variant="success">
+      <CircleCheckIcon />
+      <AlertTitle>Hub started as {started.name}.</AlertTitle>
+      <AlertDescription>
+        <p>It answers on this computer at:</p>
+        <Input
+          readOnly
+          size="sm"
+          font="mono"
+          aria-label="Local hub address"
+          value={started.address}
+          onFocus={(event) => event.target.select()}
+        />
+        <p>
+          {started.setupLink !== null
+            ? "Its setup link is filled in below. Share the hub, then create the team."
+            : "It printed no setup link, so its data volume already has a team. Ask that team's admin for an invite instead."}
+        </p>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 /**
  * Setup step: share a hub running on this computer over Tailscale. Reports the
  * address once it answers, or null while there is none to use.
@@ -352,11 +493,16 @@ export function HubSharing({
   prepared,
   exposure,
   onAddress,
+  onSetupLink,
 }: {
   prepared: PreparedConnection;
   exposure: TeamHubExposure;
   onAddress: (address: string | null) => void;
+  /** Receives the setup link printed by a hub the app just started. */
+  onSetupLink: (link: string) => void;
 }) {
+  const [containerName, setContainerName] = useState(TEAM_HUB_DEFAULT_CONTAINER_NAME);
+  const [started, setStarted] = useState<StartedHub | null>(null);
   const [hubPort, setHubPort] = useState(DEFAULT_HUB_PORT);
   const [hubPortDraft, setHubPortDraft] = useState(String(DEFAULT_HUB_PORT));
   const [servePort, setServePort] = useState(DEFAULT_SHARE_PORT);
@@ -385,8 +531,14 @@ export function HubSharing({
 
   return (
     <div className="space-y-2">
+      {started !== null ? <StartedHubNotice started={started} /> : null}
       <ReachNotice
-        presentation={presentNetworkState(shown, { exposure, hubPort, servePort })}
+        presentation={presentNetworkState(shown, {
+          exposure,
+          hubPort,
+          servePort,
+          containerName,
+        })}
         busy={busy}
         onRetry={recheck}
         onShare={() => void run("exposeHub")}
@@ -419,6 +571,19 @@ export function HubSharing({
               />
             </div>
           </label>
+        ) : null}
+        {shown.status === "no-hub" ? (
+          <HubStart
+            prepared={prepared}
+            hubPort={hubPort}
+            name={containerName}
+            onName={setContainerName}
+            onStarted={(next) => {
+              setStarted(next);
+              if (next.setupLink !== null) onSetupLink(next.setupLink);
+              recheck();
+            }}
+          />
         ) : null}
       </ReachNotice>
       {requestError ? (

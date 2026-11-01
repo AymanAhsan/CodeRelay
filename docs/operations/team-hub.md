@@ -17,7 +17,7 @@ Invite links are built from the address the admin's app saved when the hub was s
 
 ## Choosing an address
 
-If the hub runs on the same computer as your T3 Code server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Run the hub, then choose Tailscale there. The steps below are for a hub on another machine, or to do the same by hand.
+If the hub runs on the same computer as your T3 Code server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can start it and share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Build the image once, then choose Tailscale there and select **Start hub**. The app runs `docker run --pull never --name <name> -v <name>-data:/data …`, so it never pulls an image, and each name gets its own volume. The steps below are for a hub on another machine, or to do the same by hand.
 
 | Situation                                                | Use                                                                                                                                                      |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |

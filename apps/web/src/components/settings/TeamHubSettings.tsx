@@ -392,6 +392,7 @@ function ConnectedTeamHub({
                   prepared={prepared}
                   exposure={reach}
                   onAddress={setShareAddress}
+                  onSetupLink={setJoinLink}
                 />
               )}
             </div>

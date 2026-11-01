@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   hubStartCommand,
+  isValidContainerName,
   isTailscaleShareUrl,
   nextSharePort,
   normalizeHubAddress,
@@ -13,7 +14,12 @@ import {
   type ReachContext,
 } from "./TeamHubReach.logic";
 
-const context: ReachContext = { exposure: "public", hubPort: 8080, servePort: 443 };
+const context: ReachContext = {
+  exposure: "public",
+  hubPort: 8080,
+  servePort: 443,
+  containerName: "my-hub",
+};
 
 const BLOCKED_REASONS: ReadonlyArray<TeamHubNetworkBlockedReason> = [
   "not-installed",
@@ -61,8 +67,9 @@ describe("presentNetworkState", () => {
     const presentation = presentNetworkState({ status: "no-hub", hubPort: 9000 }, context);
     expect(presentation.actions[0]).toEqual({
       kind: "copy",
-      label: "Copy start command",
-      value: "docker run -d -p 9000:8080 -v hub-data:/data t3-team-hub",
+      label: "Copy command",
+      value:
+        "docker run -d --pull never --name my-hub -p 9000:8080 -v my-hub-data:/data t3-team-hub",
     });
   });
 
@@ -91,7 +98,7 @@ describe("presentNetworkState", () => {
   it("hands over the exact command when Tailscale refuses", () => {
     const failed = presentNetworkState(
       { status: "failed", reason: "permission-denied" },
-      { exposure: "private", hubPort: 8080, servePort: 8443 },
+      { exposure: "private", hubPort: 8080, servePort: 8443, containerName: "my-hub" },
     );
     expect(failed.tone).toBe("error");
     expect(failed.actions[0]).toEqual({
@@ -179,7 +186,17 @@ describe("share helpers", () => {
     expect(normalizeHubAddress("not a url")).toBeNull();
   });
 
-  it("maps the start command to the container's fixed port", () => {
-    expect(hubStartCommand(8080)).toBe("docker run -d -p 8080:8080 -v hub-data:/data t3-team-hub");
+  it("maps the start command to the container's fixed port and the chosen name", () => {
+    expect(hubStartCommand({ hubPort: 8080, name: "team" })).toBe(
+      "docker run -d --pull never --name team -p 8080:8080 -v team-data:/data t3-team-hub",
+    );
+  });
+
+  it("accepts only names Docker accepts", () => {
+    expect(isValidContainerName("t3-team-hub")).toBe(true);
+    expect(isValidContainerName("hub.v2_a")).toBe(true);
+    expect(isValidContainerName("")).toBe(false);
+    expect(isValidContainerName("-hub")).toBe(false);
+    expect(isValidContainerName("my hub")).toBe(false);
   });
 });
