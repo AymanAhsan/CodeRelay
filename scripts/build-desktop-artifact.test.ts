@@ -328,6 +328,36 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("packages main builds with the rolling release manifest feed", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "0.0.0-main.123",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.deepStrictEqual(config.publish, [
+        {
+          provider: "generic",
+          url: "https://github.com/example/coderelay/releases/download/main-latest",
+          channel: "latest",
+          useMultipleRangeRequest: false,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { GITHUB_REPOSITORY: "example/coderelay" },
+          }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(

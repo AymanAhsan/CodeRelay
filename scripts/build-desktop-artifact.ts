@@ -2566,6 +2566,7 @@ export function resolveDesktopRuntimeDependencies(
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
   updateChannel: "latest" | "nightly",
+  version?: string,
 ) {
   const env = yield* Config.all({
     updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
@@ -2580,6 +2581,17 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
 
   const [owner, repo, ...rest] = rawRepo.split("/");
   if (!owner || !repo || rest.length > 0) return undefined;
+
+  // Main builds replace a rolling release whose tag is not a semver version.
+  // Read its manifest directly instead of asking the GitHub provider to sort tags.
+  if (version && /^0\.0\.0-main\.\d+$/.test(version)) {
+    return {
+      provider: "generic",
+      url: `https://github.com/${owner}/${repo}/releases/download/main-latest`,
+      channel: "latest",
+      useMultipleRangeRequest: false,
+    };
+  }
 
   return {
     provider: "github",
@@ -2699,7 +2711,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   if (!isDesktopPreviewVersion(version)) {
-    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
+    const publishConfig = yield* resolveGitHubPublishConfig(updateChannel, version);
     if (publishConfig) {
       buildConfig.publish = [publishConfig];
     } else if (mockUpdates) {

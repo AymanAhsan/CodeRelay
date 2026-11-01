@@ -87,6 +87,30 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("checks main builds automatically and manually using the rolling feed channel", () => {
+    const harness = makeHarness({ appVersion: "0.0.0-main.123" });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.equal(harness.channel(), "latest");
+        assert.equal(harness.allowPrerelease(), true);
+        assert.equal(harness.allowDowngrade(), false);
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal(harness.checkCount(), 1);
+        yield* TestClock.adjust(Duration.minutes(4));
+        assert.equal(harness.checkCount(), 2);
+        yield* updates.check("menu");
+        assert.equal(harness.checkCount(), 3);
+        harness.emit("update-available", { version: "0.0.0-main.124" });
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.equal(state.availableVersion, "0.0.0-main.124");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>

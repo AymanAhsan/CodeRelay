@@ -391,15 +391,18 @@ export const make = Effect.gen(function* () {
     channel: DesktopUpdateChannel,
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
-    const allowsPrerelease = channel === "nightly";
-    yield* electronUpdater.setChannel(channel);
+    const isMainBuild = /^0\.0\.0-main\.\d+$/.test(environment.appVersion);
+    const allowsPrerelease = channel === "nightly" || isMainBuild;
+    const allowsDowngrade = channel === "nightly" && !isMainBuild;
+    // The rolling main feed publishes latest.yml, including prerelease versions.
+    yield* electronUpdater.setChannel(isMainBuild ? "latest" : channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
-    yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
+    yield* electronUpdater.setAllowDowngrade(allowsDowngrade);
     yield* electronUpdater.setFullChangelog(allowsPrerelease);
     yield* logUpdaterInfo("using update channel", {
       channel,
       allowPrerelease: allowsPrerelease,
-      allowDowngrade: allowsPrerelease,
+      allowDowngrade: allowsDowngrade,
       fullChangelog: allowsPrerelease,
     });
   });
