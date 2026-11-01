@@ -1,5 +1,6 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import handoffVideo from "../../../../docs/assets/team-handoff.webm?url";
 import { REPOSITORY_URL, UPSTREAM_REPOSITORY_URL, WINDOWS_INSTALLER_URL, SOURCE_ZIP_URL, QUICK_START_URL, TEAM_GUIDE_URL, HOSTING_GUIDE_URL } from "../lib/site";
 
 const handoff = [
@@ -68,26 +69,48 @@ const handoff = [
       </figure>
     </section>
 
+    <section class="section" aria-labelledby="demo-title">
+      <div class="wrap">
+        <h2 id="demo-title">See a handoff between teammates</h2>
+        <p class="section-intro">Bob's agent hands the backend work to Alice while it builds the frontend. Watch both sides in 68 seconds.</p>
+        <figure class="handoff-demo">
+          <video
+            controls
+            playsinline
+            preload="none"
+            poster="/team-handoff-poster.png"
+            width="1920"
+            height="1080"
+            aria-label="CodeRelay demo: Bob hands a backend task to Alice"
+            aria-describedby="demo-caption"
+          >
+            <source src={handoffVideo} type="video/webm" />
+            <p><a href={handoffVideo}>Watch the handoff demo</a>.</p>
+          </video>
+          <figcaption class="feed-caption" id="demo-caption">A real two-teammate session, with on-screen explanations. <a href={handoffVideo}>Open the video full-size</a>.</figcaption>
+        </figure>
+      </div>
+    </section>
+
     <section class="section" aria-labelledby="workflow-title">
       <div class="wrap">
         <h2 id="workflow-title">From “I need an API” to a change you can integrate</h2>
-        <p class="section-intro">Keep follow-up work attached to the people, repository paths, and decisions it depends on.</p>
         <ol class="steps">
           <li class="step"><span class="step-n">1</span><div>
             <h3>Declare your areas</h3>
-            <p>Join a Team hub and list the paths you own, such as <code>apps/api/**</code>. Agents use those areas to route work. When ownership is ambiguous, they name a teammate explicitly.</p>
+            <p>List the paths you own, such as <code>apps/api/**</code>, so agents can route work to you. They can also name a teammate explicitly.</p>
           </div></li>
           <li class="step"><span class="step-n">2</span><div>
             <h3>Agree on the contract</h3>
-            <p>The requesting agent pushes a spec or shared schema and proposes a task pinned to that Git commit. Review or revise it together. Both teammates must agree on the same version before acceptance.</p>
+            <p>Push a spec or shared schema and pin the task to its Git commit. Both teammates agree on that version before acceptance.</p>
           </div></li>
           <li class="step"><span class="step-n">3</span><div>
             <h3>Accept into your own agent thread</h3>
-            <p>Review the incoming task in chat or the Team hub. Accepting starts a thread in your local project that fetches the agreed contract and works from it.</p>
+            <p>Accept the task in chat or the Team hub to start a local agent thread working from the agreed contract.</p>
           </div></li>
           <li class="step"><span class="step-n">4</span><div>
             <h3>Review the result and integrate it</h3>
-            <p>The agent reports completion with a summary, branch, and commit. Fetch and review the work, then integrate it yourself. Reopen the task if it needs another pass.</p>
+            <p>Fetch the returned branch and commit, review the summary and changes, then integrate. Reopen the task if it needs another pass.</p>
           </div></li>
         </ol>
         <p class="trust"><strong>You choose when work starts.</strong> Tasks normally wait for your acceptance. Optional automatic tasks let trusted teammates start eligible contract work, with a limit of three attempts and one automatic task in progress at a time. <a href={TEAM_GUIDE_URL + "#automatically-accepting-trusted-work"}>Read about automatic tasks</a>.</p>
