@@ -1,14 +1,9 @@
 name: Release
 
+# Manual only: the tag-push and nightly-schedule triggers inherited from T3 Code
+# need signing, Vercel, Cloudflare, and Discord secrets this repository does not
+# have. Windows installers ship from desktop-windows-latest.yml instead.
 on:
-  push:
-    tags:
-      - "v*.*.*"
-      - "!v*-nightly.*"
-      - "!v*-preview.*"
-  schedule:
-    # Avoid minute zero, when GitHub scheduled jobs are busiest.
-    - cron: "8,38 * * * *"
   workflow_dispatch:
     inputs:
       channel:

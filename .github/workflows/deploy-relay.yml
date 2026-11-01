@@ -1,9 +1,8 @@
 name: Deploy T3 Connect relay
 
+# Manual only: deploying needs Cloudflare, PlanetScale, Clerk, and push
+# credentials this repository does not have.
 on:
-  push:
-    branches:
-      - main
   # Alchemy does not redeploy the Worker when only a Config value read in its
   # Init changes (alchemy-run/alchemy#1831), so a changed repository variable
   # needs a forced deploy to reach production.
