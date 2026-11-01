@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 
 import { ManagedRelayAuthProvider } from "../../cloud/managedAuth";
 import { clerkAppearance } from "./clerkAppearance";
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { hasCloudPublicConfig, hasCodeRelayAccounts } from "../../cloud/publicConfig";
+import { RequireCodeRelaySignIn } from "./RequireCodeRelaySignIn";
 
 /**
  * Electron half of the managed-auth boundary. The Electron provider statically
@@ -19,12 +20,18 @@ export default function ElectronManagedAuthShell({
   readonly publishableKey: string;
   readonly children: ReactNode;
 }) {
+  const gated = hasCodeRelayAccounts() ? (
+    <RequireCodeRelaySignIn>{children}</RequireCodeRelaySignIn>
+  ) : (
+    children
+  );
+
   return (
     <ClerkProvider appearance={clerkAppearance} publishableKey={publishableKey} passkeys={passkeys}>
       {hasCloudPublicConfig() ? (
-        <ManagedRelayAuthProvider>{children}</ManagedRelayAuthProvider>
+        <ManagedRelayAuthProvider>{gated}</ManagedRelayAuthProvider>
       ) : (
-        children
+        gated
       )}
     </ClerkProvider>
   );

@@ -3,10 +3,10 @@
 T3 Code shows a setup flow when you open a new installation or connect to the
 hosted app for the first time. Existing workspaces skip this flow.
 
-Builds with CodeRelay accounts enabled offer optional registration for future cloud
-access. You can continue locally without an account. After signing in, choose
-whether to receive cloud early-access and product-update emails, then save your
-preference. You can change it later in the account menu under **CodeRelay Cloud**,
+Desktop and web builds with CodeRelay accounts enabled ask you to sign in or create
+an account when the app opens. You stay signed in between launches; signing out from
+the account menu brings the sign-in screen back. Choose whether to receive cloud
+early-access and product-update emails, then save your preference. You can change it later in the account menu under **CodeRelay Cloud**,
 or **Settings → CodeRelay account** on mobile. Registration does not upload your
 projects or conversations, and cloud hosting is not available yet.
 

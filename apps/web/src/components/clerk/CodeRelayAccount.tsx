@@ -22,8 +22,8 @@ export function CodeRelayAccount() {
     >
       <div className="space-y-5">
         <p className="text-sm text-muted-foreground">
-          Accounts are optional. Your projects and conversations stay on your environment; creating
-          an account does not upload them.
+          Your projects and conversations stay on your environment; your account does not upload
+          them.
         </p>
         {user ? (
           <CodeRelayAccountPreferences key={user.id} />

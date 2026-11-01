@@ -76,9 +76,18 @@ jobs:
 
       # No WSL runtime is passed, so the installer ships without the embedded
       # Linux CLI archive; the Windows-native backend is unaffected.
+      # The Clerk publishable key is public and baked into the bundle at build
+      # time; without it the app ships with no sign-in at all, so fail instead.
       - name: Build installer
         shell: bash
+        env:
+          T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          CODERELAY_ACCOUNTS: "1"
         run: |
+          if [[ -z "${T3CODE_CLERK_PUBLISHABLE_KEY:-}" ]]; then
+            echo "::error::Set the CLERK_PUBLISHABLE_KEY repository variable so the installer includes sign-in."
+            exit 1
+          fi
           node scripts/build-desktop-artifact.ts \
             --platform win --target nsis --arch x64 \
             --build-version "0.0.0-main.${{ github.run_number }}" \
