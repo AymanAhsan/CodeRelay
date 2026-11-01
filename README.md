@@ -6,11 +6,11 @@ CodeRelay gives teammates a way to hand work between their agents. Each teammate
 
 ## See the handoff
 
-> **GIF placeholder · 30–60 seconds**
->
-> Alice's agent needs an API change → pushes a contract and sends Bob a task → Bob accepts it into his agent thread → Bob's agent completes the work and returns the branch and commit.
+<video src="docs/assets/team-handoff.webm" controls muted width="100%"></video>
 
-<!-- Replace the placeholder above with the Alice-to-Bob handoff GIF when recorded. -->
+Alice's agent needs an API change → pushes a contract and sends Bob a task → Bob accepts it into his agent thread → Bob's agent completes the work and returns the branch and commit.
+
+If the video doesn't play, [open it directly](docs/assets/team-handoff.webm).
 
 ## Quick start
 
