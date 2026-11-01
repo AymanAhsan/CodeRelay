@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -146,6 +147,8 @@ function makeHarness(
     Layer.mock(ProjectService.ProjectService)({
       listShells: () =>
         Effect.succeed(options.matchingProject === false ? [] : (options.projects ?? [project])),
+      // Resolving identity reads the clone's git remote, which the cached listing may lack.
+      getShell: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getShellSnapshot: () =>
@@ -223,6 +226,17 @@ describe("team hub suggested task acceptance", () => {
       expect(error.reason).toBe("project_missing");
       expect(harness.launched.size).toBe(0);
       expect(harness.hubDecisions).toEqual([]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("accepts into a clone whose repository identity is not cached yet", () => {
+    const harness = makeHarness({ projects: [{ ...project, repositoryIdentity: null }] });
+    return Effect.gen(function* () {
+      const decisions = yield* TeamHubTaskDecisionService;
+      const result = yield* decisions.decideTask(taskId, "accepted");
+      expect(result.threadId).toBe(threadId);
+      expect(harness.launched.get(threadId)?.projectId).toBe(projectId);
+      expect(harness.hubDecisions).toEqual(["accepted"]);
     }).pipe(Effect.provide(harness.layer));
   });
 
