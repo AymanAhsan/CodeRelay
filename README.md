@@ -50,6 +50,10 @@ Both local sessions share the selected project's files. To try a different repos
 
 See the [local demo guide](docs/operations/team-hub.md#local-development-with-alice-and-bob) for options, the [Team hub guide](docs/user/team-hub.md) for contract review and trusted automatic tasks, or [self-host a hub](docs/operations/team-hub.md) to connect real teammates. For a single session, run `vp run dev`; see the [development guide](docs/operations/development.md).
 
+## Start a hub
+
+A hub is required for real teammates to see each other and hand off tasks. Follow [Self-host a team hub](docs/operations/team-hub.md) to run one and share its address.
+
 ## Built on T3 Code
 
 CodeRelay is built on [T3 Code](https://github.com/pingdotgg/t3code), which provides the agent GUI and web, desktop, and mobile foundations. This independently maintained repository adds the Team hub workflow for handing work between teammates' agents. The application currently retains upstream names and package identifiers; run CodeRelay from this checkout.
