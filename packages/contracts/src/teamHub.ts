@@ -225,9 +225,14 @@ export type TeamHubNetworkInput = typeof TeamHubNetworkInput.Type;
 export const TeamHubCheckInput = Schema.Struct({ url: Text });
 export type TeamHubCheckInput = typeof TeamHubCheckInput.Type;
 
-/** The image `apps/hub/Dockerfile` builds, as the self-hosting guide names it. */
-export const TEAM_HUB_DOCKER_IMAGE = "t3-team-hub";
+/** Published by CodeRelay's hub image workflow. */
+export const TEAM_HUB_DOCKER_IMAGE = "ghcr.io/aymanahsan/coderelay-hub";
 export const TEAM_HUB_DEFAULT_CONTAINER_NAME = "t3-team-hub";
+
+/** Source checkouts and prereleases follow main; stable installs pin their version. */
+export function teamHubDockerTag(version: string, development = false): string {
+  return !development && version !== "0.0.0" && /^\d+\.\d+\.\d+$/.test(version) ? version : "edge";
+}
 
 /** Docker's own rule for container names, so a bad name is refused before Docker runs. */
 export const TeamHubContainerName = Schema.String.check(
@@ -246,19 +251,17 @@ export type TeamHubStartInput = typeof TeamHubStartInput.Type;
  * command a person copies is exactly the one the app runs. Each name gets its own
  * data volume, so two hubs never share one database.
  */
-export function teamHubDockerRunArgs(input: TeamHubStartInput): ReadonlyArray<string> {
+export function teamHubDockerRunArgs(input: TeamHubStartInput, tag: string): ReadonlyArray<string> {
   return [
     "run",
     "-d",
-    "--pull",
-    "never",
     "--name",
     input.name,
     "-p",
     `${String(input.hubPort)}:8080`,
     "-v",
     `${input.name}-data:/data`,
-    TEAM_HUB_DOCKER_IMAGE,
+    `${TEAM_HUB_DOCKER_IMAGE}:${tag}`,
   ];
 }
 

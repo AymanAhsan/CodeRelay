@@ -392,7 +392,7 @@ export const runTeamHubAction = Effect.fn("clientRuntime.teamHub.action")(functi
       return yield* executeAuthenticatedEnvironmentHttpRequest({
         ...common,
         // Docker can be slow to create a container, then the hub needs a moment to print its link.
-        timeoutMs: 60_000,
+        timeoutMs: 11 * 60_000,
         url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.startHub(),
         request: ({ client, headers }) => client.startHub({ headers, payload: action.input }),
       });

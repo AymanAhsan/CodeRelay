@@ -1,5 +1,4 @@
 import {
-  TEAM_HUB_DOCKER_IMAGE,
   teamHubDockerRunArgs,
   type TeamHubExposure,
   type TeamHubNetworkBlockedReason,
@@ -42,22 +41,20 @@ export interface ReachContext {
   readonly servePort: number;
   /** The container name the admin picked for a hub the app starts. */
   readonly containerName: string;
+  readonly imageTag: string;
 }
 
 /** The terminal command that does what the Share button does, for when it cannot. */
-export function shareCommand(context: Omit<ReachContext, "containerName">): string {
+export function shareCommand(context: Omit<ReachContext, "containerName" | "imageTag">): string {
   const subcommand = context.exposure === "public" ? "funnel" : "serve";
   return `tailscale ${subcommand} --bg --https=${String(context.servePort)} http://127.0.0.1:${String(context.hubPort)}`;
 }
 
 /** The command the Start hub button runs, for a person who would rather run it themselves. */
-export function hubStartCommand(input: TeamHubStartInput): string {
+export function hubStartCommand(input: TeamHubStartInput, tag: string): string {
   // Container names and ports never need quoting.
-  return `docker ${teamHubDockerRunArgs(input).join(" ")}`;
+  return `docker ${teamHubDockerRunArgs(input, tag).join(" ")}`;
 }
-
-/** Builds the hub image from a CodeRelay checkout; `--pull never` means Start never fetches it. */
-export const HUB_BUILD_COMMAND = `docker build -f apps/hub/Dockerfile -t ${TEAM_HUB_DOCKER_IMAGE} .`;
 
 /** Docker's names: a letter or digit, then letters, digits, `_`, `.` or `-`. */
 export function isValidContainerName(name: string): boolean {
@@ -88,9 +85,10 @@ export function presentStartFailure(
     case "image-missing":
       return {
         ...base,
-        title: `The ${TEAM_HUB_DOCKER_IMAGE} image isn't on this computer.`,
-        detail: "Build it once from a CodeRelay checkout, then try again.",
-        actions: [{ kind: "copy", label: "Copy build command", value: HUB_BUILD_COMMAND }],
+        title: "The hub image could not be downloaded.",
+        detail:
+          "Check your internet connection and try again. The image may not be published or public yet.",
+        actions: [],
       };
     case "name-in-use":
       return {
@@ -112,7 +110,8 @@ export function presentStartFailure(
       return {
         ...base,
         title: "Docker didn't answer in time.",
-        detail: "Check that Docker is running, then try again.",
+        detail:
+          "Check Docker and your internet connection. The first download can take several minutes.",
         actions: [],
       };
     case "command-failed":
@@ -252,7 +251,10 @@ export function presentNetworkState(
           {
             kind: "copy",
             label: "Copy command",
-            value: hubStartCommand({ hubPort: state.hubPort, name: context.containerName }),
+            value: hubStartCommand(
+              { hubPort: state.hubPort, name: context.containerName },
+              context.imageTag,
+            ),
           },
           RETRY,
         ],

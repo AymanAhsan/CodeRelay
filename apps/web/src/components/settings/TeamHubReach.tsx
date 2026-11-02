@@ -3,6 +3,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { readTeamHubNetworkState } from "@t3tools/client-runtime/state/team-hub";
 import {
   TEAM_HUB_DEFAULT_CONTAINER_NAME,
+  teamHubDockerTag,
   TeamHubNetworkState,
   TeamHubReachability,
   TeamHubStartResult,
@@ -17,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { serverEnvironment } from "~/state/server";
 import { teamHubActionCommand } from "~/state/teamHub";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -425,7 +427,7 @@ function HubStart({
           {busy ? (
             <>
               <Spinner size="sm" />
-              Starting…
+              Starting hub (first download may take several minutes)…
             </>
           ) : (
             "Start hub"
@@ -501,6 +503,10 @@ export function HubSharing({
   /** Receives the setup link printed by a hub the app just started. */
   onSetupLink: (link: string) => void;
 }) {
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(prepared.environmentId));
+  const imageTag =
+    serverConfig?.environment.teamHubDockerTag ??
+    teamHubDockerTag(serverConfig?.environment.serverVersion ?? "dev");
   const [containerName, setContainerName] = useState(TEAM_HUB_DEFAULT_CONTAINER_NAME);
   const [started, setStarted] = useState<StartedHub | null>(null);
   const [hubPort, setHubPort] = useState(DEFAULT_HUB_PORT);
@@ -538,6 +544,7 @@ export function HubSharing({
           hubPort,
           servePort,
           containerName,
+          imageTag,
         })}
         busy={busy}
         onRetry={recheck}
@@ -572,7 +579,8 @@ export function HubSharing({
             </div>
           </label>
         ) : null}
-        {shown.status === "no-hub" ? (
+        {/* A share can outlive its hub (Tailscale keeps it), so an address that does not answer needs the button too. */}
+        {shown.status === "no-hub" || (shown.status === "exposed" && !shown.reachable) ? (
           <HubStart
             prepared={prepared}
             hubPort={hubPort}

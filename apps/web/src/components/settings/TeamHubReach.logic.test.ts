@@ -9,6 +9,7 @@ import {
   normalizeHubAddress,
   presentNetworkState,
   presentReachability,
+  presentStartFailure,
   servePortOfUrl,
   shareCommand,
   type ReachContext,
@@ -19,6 +20,7 @@ const context: ReachContext = {
   hubPort: 8080,
   servePort: 443,
   containerName: "my-hub",
+  imageTag: "1.2.3",
 };
 
 const BLOCKED_REASONS: ReadonlyArray<TeamHubNetworkBlockedReason> = [
@@ -69,7 +71,7 @@ describe("presentNetworkState", () => {
       kind: "copy",
       label: "Copy command",
       value:
-        "docker run -d --pull never --name my-hub -p 9000:8080 -v my-hub-data:/data t3-team-hub",
+        "docker run -d --name my-hub -p 9000:8080 -v my-hub-data:/data ghcr.io/aymanahsan/coderelay-hub:1.2.3",
     });
   });
 
@@ -98,7 +100,7 @@ describe("presentNetworkState", () => {
   it("hands over the exact command when Tailscale refuses", () => {
     const failed = presentNetworkState(
       { status: "failed", reason: "permission-denied" },
-      { exposure: "private", hubPort: 8080, servePort: 8443, containerName: "my-hub" },
+      { ...context, exposure: "private", servePort: 8443 },
     );
     expect(failed.tone).toBe("error");
     expect(failed.actions[0]).toEqual({
@@ -187,8 +189,8 @@ describe("share helpers", () => {
   });
 
   it("maps the start command to the container's fixed port and the chosen name", () => {
-    expect(hubStartCommand({ hubPort: 8080, name: "team" })).toBe(
-      "docker run -d --pull never --name team -p 8080:8080 -v team-data:/data t3-team-hub",
+    expect(hubStartCommand({ hubPort: 8080, name: "team" }, "edge")).toBe(
+      "docker run -d --name team -p 8080:8080 -v team-data:/data ghcr.io/aymanahsan/coderelay-hub:edge",
     );
   });
 
@@ -199,4 +201,13 @@ describe("share helpers", () => {
     expect(isValidContainerName("-hub")).toBe(false);
     expect(isValidContainerName("my hub")).toBe(false);
   });
+});
+
+it("explains failed downloads without asking users to build", () => {
+  const result = presentStartFailure(
+    { status: "failed", reason: "image-missing", output: "manifest unknown" },
+    { hubPort: 8080, name: "team" },
+  );
+  expect(result.detail).toContain("internet connection");
+  expect(result.actions).toEqual([]);
 });

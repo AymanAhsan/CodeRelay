@@ -10,9 +10,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { hubDockerTag } from "./image.ts";
 
-// Creating a container is quick with `--pull never`; the slack covers a cold Docker Desktop.
-const RUN_TIMEOUT = Duration.seconds(45);
+// The first run downloads the image, including on slower connections.
+const RUN_TIMEOUT = Duration.minutes(10);
 const LOGS_TIMEOUT = Duration.seconds(5);
 // The hub prints its setup link right after it starts listening.
 const SETUP_LINK_ATTEMPTS = 10;
@@ -27,10 +28,13 @@ const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
 const FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, TeamHubStartFailureReason]> = [
   [/is already in use by container/i, "name-in-use"],
   [/port is already allocated|address already in use|ports are not available/i, "port-in-use"],
-  [/no such image|unable to find image|pull access denied/i, "image-missing"],
   [
     /cannot connect to the docker daemon|error during connect|docker daemon is not running|docker desktop is not running/i,
     "docker-not-running",
+  ],
+  [
+    /no such image|pull access denied|manifest unknown|manifest.*not found|TLS handshake|no such host|failed to resolve reference|unauthorized|denied:|network is unreachable|connection refused|i\/o timeout/i,
+    "image-missing",
   ],
 ];
 
@@ -115,7 +119,7 @@ const make = Effect.gen(function* () {
 
   const start = (input: TeamHubStartInput): Effect.Effect<TeamHubStartResult> =>
     Effect.gen(function* () {
-      const run = yield* docker(teamHubDockerRunArgs(input), RUN_TIMEOUT);
+      const run = yield* docker(teamHubDockerRunArgs(input, hubDockerTag), RUN_TIMEOUT);
       switch (run._tag) {
         case "not-installed":
           return { status: "failed", reason: "docker-not-installed", output: "" } as const;
@@ -131,7 +135,11 @@ const make = Effect.gen(function* () {
               yield* docker(["rm", "-f", createdId], LOGS_TIMEOUT);
             }
             const output = trimOutput(run.stderr.length > 0 ? run.stderr : run.stdout);
-            return { status: "failed", reason: reasonOf(output), output } as const;
+            return {
+              status: "failed",
+              reason: reasonOf(run.stderr || run.stdout),
+              output,
+            } as const;
           }
           return {
             status: "started",
