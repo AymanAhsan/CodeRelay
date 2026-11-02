@@ -79,6 +79,7 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TeamHubDocker from "./teamHub/TeamHubDocker.ts";
 import * as TeamHubNetwork from "./teamHub/TeamHubNetwork.ts";
 import * as TeamHubService from "./teamHub/TeamHubService.ts";
 import * as TeamHubActivityReporter from "./teamHub/TeamHubActivityReporter.ts";
@@ -631,6 +632,7 @@ const RuntimeMiscDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(TeamHubServiceLayerLive),
   Layer.provideMerge(TeamHubNetworkLayerLive),
+  Layer.provideMerge(TeamHubDocker.layer),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),

@@ -933,6 +933,20 @@ jobs:
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
+  # GITHUB_TOKEN releases do not trigger release-event workflows.
+  publish_hub:
+    name: Publish hub image
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-hub-image.yml
+    with:
+      ref: ${{ needs.preflight.outputs.ref }}
+      version: ${{ needs.preflight.outputs.version }}
+      stable: ${{ needs.preflight.outputs.release_channel == 'stable' }}
+
   publish_aur:
     name: Publish AUR package
     needs: [preflight, release]

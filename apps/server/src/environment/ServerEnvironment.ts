@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { hubDockerTag } from "../teamHub/image.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveServerInstallation } from "../cli/invocation.ts";
 import { readAgentActivityPublishingActive } from "../cloud/config.ts";
@@ -214,6 +215,7 @@ export const make = Effect.gen(function* () {
       ...(machine === null ? {} : { machine }),
     },
     serverVersion: packageJson.version,
+    teamHubDockerTag: hubDockerTag,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
       repositoryIdentity: true,

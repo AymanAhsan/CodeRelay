@@ -3,11 +3,18 @@
 The hub is a small server with a SQLite database. Run it on any machine your teammates can reach, such as the PC you already use. It must stay on, with Docker running, for teammates to see each other. If it is offline, local agent work continues and team updates resume when it reconnects.
 
 ```bash
-docker build -f apps/hub/Dockerfile -t t3-team-hub .
-docker run -d -p 8080:8080 -v hub-data:/data -e HUB_PUBLIC_URL=<address teammates will use> t3-team-hub
+docker run -d -p 8080:8080 -v hub-data:/data -e HUB_PUBLIC_URL=<address teammates will use> ghcr.io/aymanahsan/coderelay-hub:latest
 ```
 
+For manual runs, replace `latest` with the version of your CodeRelay server to keep the hub protocol compatible. Development and nightly builds use `edge`. To build locally instead, run `docker build -f apps/hub/Dockerfile -t t3-team-hub .` from a checkout and use `t3-team-hub` in your run command.
+
 State lives in `/data/hub.sqlite`. Keep `/data` on a persistent volume: recreating the container without it creates an empty hub, and every member's credential stops working. Back the volume up, or use SQLite's backup API while the hub is running.
+
+## Publishing images
+
+The CodeRelay repository's `publish-hub-image.yml` publishes Linux amd64 and arm64 images to `ghcr.io/aymanahsan/coderelay-hub`. Pushes to `main` publish `edge`; releases publish their version and stable releases also publish `latest`. Each build includes a `sha-<short>` tag. The release workflow calls the publisher directly because releases created with `GITHUB_TOKEN` do not trigger another workflow.
+
+For the first publish, run **Publish hub image** manually on `main`. Then open the GitHub package settings and change its visibility to **Public** so users can pull without signing in. Check `docker pull ghcr.io/aymanahsan/coderelay-hub:edge` on Windows with Linux containers and an arm64 Mac.
 
 ## The hub address must be reachable by teammates
 
@@ -17,7 +24,7 @@ Invite links are built from the address the admin's app saved when the hub was s
 
 ## Choosing an address
 
-If the hub runs on the same computer as your T3 Code server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Run the hub, then choose Tailscale there. The steps below are for a hub on another machine, or to do the same by hand.
+If the hub runs on the same computer as your T3 Code server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can start it and share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Choose Tailscale there and select **Start hub**. Docker downloads the image on first use; allow several minutes. Stable installs use the server's exact version tag, while source and prerelease builds use `edge`. Each name gets its own volume. The steps below are for a hub on another machine, or to do the same by hand.
 
 | Situation                                                | Use                                                                                                                                                      |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,7 +42,7 @@ Funnel gives the host a stable public HTTPS address, so teammates install nothin
 3. Start the hub with that address, then expose it:
 
    ```bash
-   docker run -d -p 8080:8080 -v hub-data:/data -e HUB_PUBLIC_URL=https://my-pc.<tailnet>.ts.net t3-team-hub
+   docker run -d -p 8080:8080 -v hub-data:/data -e HUB_PUBLIC_URL=https://my-pc.<tailnet>.ts.net ghcr.io/aymanahsan/coderelay-hub:latest
    tailscale funnel 8080
    ```
 

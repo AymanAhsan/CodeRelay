@@ -1,8 +1,11 @@
-import type {
-  TeamHubExposure,
-  TeamHubNetworkBlockedReason,
-  TeamHubNetworkState,
-  TeamHubReachability,
+import {
+  teamHubDockerRunArgs,
+  type TeamHubExposure,
+  type TeamHubNetworkBlockedReason,
+  type TeamHubNetworkState,
+  type TeamHubReachability,
+  type TeamHubStartInput,
+  type TeamHubStartResult,
 } from "@t3tools/contracts/teamHub";
 
 export const DEFAULT_HUB_PORT = 8080;
@@ -15,6 +18,7 @@ const SHARE_PORTS = [443, 8443, 10000] as const;
 const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
 const TAILSCALE_DNS_SETTINGS_URL = "https://login.tailscale.com/admin/dns";
 const TAILSCALE_FUNNEL_DOCS_URL = "https://tailscale.com/kb/1223/funnel";
+const DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/";
 
 export type ReachAction =
   | { readonly kind: "link"; readonly label: string; readonly href: string }
@@ -35,17 +39,89 @@ export interface ReachContext {
   readonly exposure: TeamHubExposure;
   readonly hubPort: number;
   readonly servePort: number;
+  /** The container name the admin picked for a hub the app starts. */
+  readonly containerName: string;
+  readonly imageTag: string;
 }
 
 /** The terminal command that does what the Share button does, for when it cannot. */
-export function shareCommand(context: ReachContext): string {
+export function shareCommand(context: Omit<ReachContext, "containerName" | "imageTag">): string {
   const subcommand = context.exposure === "public" ? "funnel" : "serve";
   return `tailscale ${subcommand} --bg --https=${String(context.servePort)} http://127.0.0.1:${String(context.hubPort)}`;
 }
 
-/** Starts the published hub image on the port the app will look for it on. */
-export function hubStartCommand(hubPort: number): string {
-  return `docker run -d -p ${String(hubPort)}:8080 -v hub-data:/data t3-team-hub`;
+/** The command the Start hub button runs, for a person who would rather run it themselves. */
+export function hubStartCommand(input: TeamHubStartInput, tag: string): string {
+  // Container names and ports never need quoting.
+  return `docker ${teamHubDockerRunArgs(input, tag).join(" ")}`;
+}
+
+/** Docker's names: a letter or digit, then letters, digits, `_`, `.` or `-`. */
+export function isValidContainerName(name: string): boolean {
+  return name.length <= 64 && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name);
+}
+
+/** What to say when Docker refused to start the hub. Docker's own message is shown beside it. */
+export function presentStartFailure(
+  failure: Extract<TeamHubStartResult, { status: "failed" }>,
+  input: TeamHubStartInput,
+): ReachPresentation {
+  const base = { tone: "error" as const };
+  switch (failure.reason) {
+    case "docker-not-installed":
+      return {
+        ...base,
+        title: "Docker isn't installed on this computer.",
+        detail: "Install Docker and start it, then try again.",
+        actions: [{ kind: "link", label: "Get Docker", href: DOCKER_INSTALL_URL }],
+      };
+    case "docker-not-running":
+      return {
+        ...base,
+        title: "Docker isn't running.",
+        detail: "Open Docker Desktop (or start the Docker service), then try again.",
+        actions: [],
+      };
+    case "image-missing":
+      return {
+        ...base,
+        title: "The hub image could not be downloaded.",
+        detail:
+          "Check your internet connection and try again. The image may not be published or public yet.",
+        actions: [],
+      };
+    case "name-in-use":
+      return {
+        ...base,
+        title: `A container named ${input.name} already exists.`,
+        detail: "Pick another name, or start that container again if it is your hub.",
+        actions: [
+          { kind: "copy", label: "Copy restart command", value: `docker start ${input.name}` },
+        ],
+      };
+    case "port-in-use":
+      return {
+        ...base,
+        title: `Port ${String(input.hubPort)} is already in use on this computer.`,
+        detail: "Pick another hub port and try again.",
+        actions: [],
+      };
+    case "timed-out":
+      return {
+        ...base,
+        title: "Docker didn't answer in time.",
+        detail:
+          "Check Docker and your internet connection. The first download can take several minutes.",
+        actions: [],
+      };
+    case "command-failed":
+      return {
+        ...base,
+        title: "Docker couldn't start the hub.",
+        detail: "Docker's message is below.",
+        actions: [],
+      };
+  }
 }
 
 /** The next port to offer when this one is taken, cycling through the allowed ones. */
@@ -170,9 +246,16 @@ export function presentNetworkState(
         tone: "info",
         title: `No hub found on port ${String(state.hubPort)}.`,
         detail:
-          "Start the hub on this computer, then check again. The hub stays a separate process; this only shares it.",
+          "Start one here with Docker, or run the command yourself and check again. The hub runs as its own container and keeps running after you close the app.",
         actions: [
-          { kind: "copy", label: "Copy start command", value: hubStartCommand(state.hubPort) },
+          {
+            kind: "copy",
+            label: "Copy command",
+            value: hubStartCommand(
+              { hubPort: state.hubPort, name: context.containerName },
+              context.imageTag,
+            ),
+          },
           RETRY,
         ],
       };
