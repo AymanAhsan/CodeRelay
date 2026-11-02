@@ -5,6 +5,7 @@ import type {
   TeamHubClientMessage,
   TeamHubInviteRecord,
   TeamHubJoinInput,
+  TeamHubRepoAccess,
   TeamHubState,
 } from "@t3tools/contracts/teamHub";
 import type { ThreadId } from "@t3tools/contracts";
@@ -61,6 +62,8 @@ export class TeamHubService extends Context.Service<
     }) => Effect.Effect<void>;
     /** Tells the team what this machine's agents are doing. Unchanged reports are dropped. */
     readonly reportActivity: (activity: TeamHubActivity) => Effect.Effect<void>;
+    /** Tells the team whether this machine can open the team repository. Unchanged reports are dropped. */
+    readonly reportRepoAccess: (access: TeamHubRepoAccess) => Effect.Effect<void>;
     readonly createInvite: Effect.Effect<
       { id: string; token: string; expiresAt: number },
       TeamHubError
@@ -126,6 +129,16 @@ const make = Effect.gen(function* () {
       JSON.stringify({ type: "set_activity", ...activity } satisfies TeamHubClientMessage),
     );
   };
+  let repoAccess: TeamHubRepoAccess | null = null;
+  const sendRepoAccess = () => {
+    if (!repoAccess || !socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "set_repo_access",
+        access: repoAccess,
+      } satisfies TeamHubClientMessage),
+    );
+  };
 
   const disconnect = () => {
     if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -156,6 +169,7 @@ const make = Effect.gen(function* () {
       if (socket !== current) return;
       current.send(JSON.stringify({ type: "hello", credential }));
       sendActivity();
+      sendRepoAccess();
     });
     current.addEventListener("message", (event) => {
       if (socket !== current) return;
@@ -385,6 +399,12 @@ const make = Effect.gen(function* () {
         if (activity?.provider === next.provider && activity.working === next.working) return;
         activity = next;
         sendActivity();
+      }),
+    reportRepoAccess: (next) =>
+      Effect.sync(() => {
+        if (repoAccess === next) return;
+        repoAccess = next;
+        sendRepoAccess();
       }),
     createInvite: request("/api/invites", {}),
     listInvites: request("/api/invites"),

@@ -13,6 +13,7 @@ import type {
   TeamHubContractRef,
   TeamHubMember,
   TeamHubNote,
+  TeamHubRepoAccess,
   TeamHubSnapshot,
   TeamHubSummary,
   TeamHubTask,
@@ -340,11 +341,15 @@ export class HubStore {
     };
   }
 
-  /** `onlineIds` and `activity` are live presence the server holds in memory, keyed by member. */
+  /**
+   * `onlineIds`, `activity` and `repoAccess` are live presence the server holds in memory, keyed
+   * by member.
+   */
   snapshot(
     member: MemberRow,
     onlineIds: ReadonlySet<string>,
     activity: ReadonlyMap<string, TeamHubActivity> = new Map(),
+    repoAccess: ReadonlyMap<string, TeamHubRepoAccess> = new Map(),
   ): TeamHubSnapshot {
     const team = this.db
       .prepare("SELECT id,name,repo FROM teams WHERE id=?")
@@ -387,6 +392,7 @@ export class HubStore {
         online: onlineIds.has(row.id),
         domains: JSON.parse(row.domains_json) as string[],
         activity: activity.get(row.id) ?? IDLE_ACTIVITY,
+        repoAccess: repoAccess.get(row.id) ?? "unknown",
         autoAccept: this.memberAutoAccept(row, members),
       })),
       summaries: summaries.map((row): TeamHubSummary => ({

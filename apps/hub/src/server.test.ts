@@ -188,6 +188,71 @@ describe("team hub server", () => {
     }
   });
 
+  it("shares repository access, skips unchanged reports, and forgets it when the repo changes", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-repo-access-"));
+    dirs.push(dir);
+    const store = new HubStore(dir);
+    const admin = store.bootstrap(
+      store.setupToken!,
+      "Engineering",
+      "github.com/example/repo",
+      "Alice",
+    );
+    const bob = store.join(
+      store.createInvite(store.authenticate(admin.credential), admin.team.id).token,
+      "Bob",
+    );
+    const server = await createHubServer(store, { host: "127.0.0.1", port: 0 });
+    const url = `ws://127.0.0.1:${server.port}/ws?version=${TEAM_HUB_PROTOCOL_VERSION}`;
+    const aliceSocket = new WebSocket(url);
+    const bobSocket = new WebSocket(url);
+    type Members = { snapshot: { members: { name: string; repoAccess: string }[] } };
+    const bobAccess = (message: unknown) =>
+      (message as Members).snapshot.members.find((member) => member.name === "Bob")?.repoAccess;
+    try {
+      await Promise.all([
+        new Promise<void>((resolve) => aliceSocket.once("open", resolve)),
+        new Promise<void>((resolve) => bobSocket.once("open", resolve)),
+      ]);
+      const aliceInitial = nextMessage(aliceSocket);
+      aliceSocket.send(JSON.stringify({ type: "hello", credential: admin.credential }));
+      await aliceInitial;
+      const alicePresence = nextMessage(aliceSocket);
+      bobSocket.send(JSON.stringify({ type: "hello", credential: bob.credential }));
+      expect(bobAccess(await alicePresence)).toBe("unknown");
+
+      const denied = { type: "set_repo_access", access: "denied" };
+      const aliceDenied = nextMessage(aliceSocket);
+      bobSocket.send(JSON.stringify(denied));
+      expect(bobAccess(await aliceDenied)).toBe("denied");
+
+      // The repeat is dropped, so Alice's next snapshot is the one for the summary.
+      const aliceNext = nextMessage(aliceSocket);
+      bobSocket.send(JSON.stringify(denied));
+      bobSocket.send(
+        JSON.stringify({ type: "publish_summary", branch: "main", files: [], description: "x" }),
+      );
+      expect(await aliceNext).toMatchObject({ snapshot: { summaries: [{ branch: "main" }] } });
+
+      const aliceRepo = nextMessage(aliceSocket);
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/team/repo`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${admin.credential}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ repo: "https://github.com/example/other" }),
+      });
+      expect(response.status).toBe(200);
+      expect(bobAccess(await aliceRepo)).toBe("unknown");
+    } finally {
+      aliceSocket.terminate();
+      bobSocket.terminate();
+      await server.close();
+      store.close();
+    }
+  });
+
   it("drops a client that stops answering pings and keeps one that does", async () => {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-heartbeat-"));
     dirs.push(dir);

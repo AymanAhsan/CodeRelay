@@ -288,6 +288,7 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
                     <Text>
                       {member.online ? "●" : "○"} {member.name}
                       {member.id === snapshot.selfId ? " (you)" : ""}
+                      {member.repoAccess === "denied" ? " · no repo access" : ""}
                     </Text>
                     {member.domains.length > 0 && (
                       <Text className="text-foreground-muted">{member.domains.join(", ")}</Text>

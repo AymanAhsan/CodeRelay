@@ -9,6 +9,7 @@ const member = (id: string, domains: string[]): TeamHubMember => ({
   online: true,
   domains,
   activity: { provider: null, working: false },
+  repoAccess: "unknown",
 });
 
 describe("matchesDomain", () => {

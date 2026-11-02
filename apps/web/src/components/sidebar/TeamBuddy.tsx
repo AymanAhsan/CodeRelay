@@ -7,11 +7,16 @@ import { getDriverOption } from "../settings/providerDriverMeta";
 
 type Pixel = readonly [x: number, y: number, width: number, height: number];
 
-/** One pixel-art buddy on a 16x12 grid. Eyes sit on the body; the laptop covers its lower half. */
+/**
+ * One pixel-art buddy on a 16x12 grid. Eyes and the sad face are cut out of the body; the laptop
+ * covers its lower half.
+ */
 interface Sprite {
   readonly body: ReadonlyArray<Pixel>;
   readonly openEyes: ReadonlyArray<Pixel>;
   readonly closedEyes: ReadonlyArray<Pixel>;
+  /** Lowered eyes and a frown, shown while the member can't open the team repository. */
+  readonly sadFace: ReadonlyArray<Pixel>;
   readonly laptop: Pixel;
 }
 
@@ -30,6 +35,13 @@ const BLOB: Sprite = {
   closedEyes: [
     [5, 5, 2, 1],
     [9, 5, 2, 1],
+  ],
+  sadFace: [
+    [6, 5, 1, 1],
+    [9, 5, 1, 1],
+    [7, 7, 2, 1],
+    [6, 8, 1, 1],
+    [9, 8, 1, 1],
   ],
   laptop: [5, 7, 6, 2],
 };
@@ -53,6 +65,13 @@ const SPRITES: Partial<Record<ProviderDriverKind, Sprite>> = {
     closedEyes: [
       [4, 4, 2, 1],
       [10, 4, 2, 1],
+    ],
+    sadFace: [
+      [5, 4, 1, 1],
+      [10, 4, 1, 1],
+      [7, 6, 2, 1],
+      [6, 7, 1, 1],
+      [9, 7, 1, 1],
     ],
     laptop: [5, 6, 6, 3],
   },
@@ -83,6 +102,11 @@ const SLEEP_GLYPH: ReadonlyArray<Pixel> = [
 const ALERT_GLYPH: ReadonlyArray<Pixel> = [
   [14, 0, 1, 2],
   [14, 3, 1, 1],
+];
+// A falling tear, in the same spot as the "z".
+const TEAR_GLYPH: ReadonlyArray<Pixel> = [
+  [14, 1, 1, 1],
+  [13, 2, 3, 2],
 ];
 
 const WAKE_MS = 600;
@@ -117,20 +141,22 @@ function Pixels(props: { pixels: ReadonlyArray<Pixel>; className?: string | unde
 
 /**
  * A member's last-used agent as a small pixel buddy. Asleep while idle, typing at a laptop while
- * an agent runs, with a one-time hop when work starts. Decorative: callers state the same thing
- * in text.
+ * an agent runs, with a one-time hop when work starts. `sad` frowns instead of sleeping, and
+ * keeps the frown while typing. Decorative: callers state the same thing in text.
  */
 export const TeamBuddy = memo(function TeamBuddy(props: {
   provider: string | null;
   working: boolean;
   online: boolean;
+  sad?: boolean;
   className?: string;
 }) {
   const waking = useWaking(props.working);
   const driver =
     props.provider !== null && isProviderDriverKind(props.provider) ? props.provider : null;
   const sprite = (driver ? SPRITES[driver] : undefined) ?? BLOB;
-  const pose = waking ? "waking" : props.working ? "working" : "asleep";
+  const pose = waking ? "waking" : props.working ? "working" : props.sad ? "sad" : "asleep";
+  const face = props.sad ? sprite.sadFace : pose === "asleep" ? sprite.closedEyes : sprite.openEyes;
   const [lx, ly, lw, lh] = sprite.laptop;
 
   return (
@@ -151,7 +177,7 @@ export const TeamBuddy = memo(function TeamBuddy(props: {
         <Pixels pixels={sprite.body} />
       </g>
       <g className="fill-sidebar">
-        <Pixels pixels={pose === "asleep" ? sprite.closedEyes : sprite.openEyes} />
+        <Pixels pixels={face} />
       </g>
       {pose === "working" ? (
         <>
@@ -185,6 +211,7 @@ export const TeamBuddy = memo(function TeamBuddy(props: {
       <g className="fill-sidebar-muted-foreground">
         {pose === "asleep" ? <Pixels pixels={SLEEP_GLYPH} /> : null}
         {pose === "waking" ? <Pixels pixels={ALERT_GLYPH} /> : null}
+        {pose === "sad" ? <Pixels pixels={TEAR_GLYPH} /> : null}
       </g>
     </svg>
   );

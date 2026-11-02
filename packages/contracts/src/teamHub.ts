@@ -3,7 +3,7 @@ import { ThreadId } from "./baseSchemas.ts";
 
 import { PortSchema } from "./baseSchemas.ts";
 
-export const TEAM_HUB_PROTOCOL_VERSION = 7;
+export const TEAM_HUB_PROTOCOL_VERSION = 8;
 
 const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 const Id = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/));
@@ -32,6 +32,14 @@ export const TeamHubActivity = Schema.Struct({
 });
 export type TeamHubActivity = typeof TeamHubActivity.Type;
 
+/**
+ * Whether a member can open the team's repository, as their own server last checked with its
+ * `gh` login. `unknown` covers no check yet, no GitHub login, and repositories not on GitHub.
+ * Kept in memory on the hub like activity, and reset when an admin changes the repository.
+ */
+export const TeamHubRepoAccess = Schema.Literals(["granted", "denied", "unknown"]);
+export type TeamHubRepoAccess = typeof TeamHubRepoAccess.Type;
+
 /** A finite allowance must be renewed by the member; completing work never refills it. */
 export const TeamHubAutoAccept = Schema.Struct({
   trustedAuthorIds: Schema.Array(Id).check(Schema.isMaxLength(100)),
@@ -50,6 +58,7 @@ export const TeamHubMember = Schema.Struct({
   online: Schema.Boolean,
   domains: TeamHubDomains,
   activity: TeamHubActivity,
+  repoAccess: TeamHubRepoAccess,
   autoAccept: Schema.optionalKey(TeamHubAutoAccept),
 });
 export type TeamHubMember = typeof TeamHubMember.Type;
@@ -332,6 +341,12 @@ export const TeamHubSetActivity = Schema.Struct({
 });
 export type TeamHubSetActivity = typeof TeamHubSetActivity.Type;
 
+/** Replaces the sender's repository access. Sent by the member's server after each check. */
+export const TeamHubSetRepoAccess = Schema.Struct({
+  type: Schema.Literal("set_repo_access"),
+  access: TeamHubRepoAccess,
+});
+
 export const TeamHubCompleteTask = Schema.Struct({
   type: Schema.Literal("complete_task"),
   taskId: Id,
@@ -361,6 +376,7 @@ export const TeamHubSetAutoAccept = Schema.Struct({
 
 export const TeamHubClientMessage = Schema.Union([
   TeamHubSetActivity,
+  TeamHubSetRepoAccess,
   TeamHubPublishSummary,
   TeamHubPostTask,
   TeamHubPostNote,
