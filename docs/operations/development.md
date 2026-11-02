@@ -32,6 +32,10 @@ To work in another repository while running this checkout's app code, use
 See [testing with Alice and Bob](./team-hub.md#local-development-with-alice-and-bob)
 for PowerShell examples, previewing the setup, persistent state, and launcher checks.
 
+Each server checks whether its `gh` login can open the team repository. Alice and Bob share one
+login, so set `T3CODE_DEV_TEAM_REPO_ACCESS=denied` (or `granted`) to skip that check and see the
+"no repo access" state.
+
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.

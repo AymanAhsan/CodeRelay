@@ -61,6 +61,7 @@ const snapshot: TeamHubSnapshot = {
       online: true,
       domains: [],
       activity: { provider: null, working: false },
+      repoAccess: "unknown",
     },
     {
       id: selfId,
@@ -69,6 +70,7 @@ const snapshot: TeamHubSnapshot = {
       online: true,
       domains: [],
       activity: { provider: null, working: false },
+      repoAccess: "unknown",
     },
   ],
   summaries: [],

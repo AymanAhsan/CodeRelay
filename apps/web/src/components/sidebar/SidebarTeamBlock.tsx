@@ -115,11 +115,16 @@ function TeamBlock({ environmentId }: { environmentId: EnvironmentId }) {
   );
 }
 
-function memberStatus(member: TeamHubMember) {
+function presenceStatus(member: TeamHubMember) {
   const agent = teamBuddyProviderLabel(member.activity.provider);
   if (!member.online) return "offline";
   if (member.activity.working) return agent ? `working with ${agent}` : "working";
   return agent ? `idle, last used ${agent}` : "idle";
+}
+
+function memberStatus(member: TeamHubMember) {
+  const presence = presenceStatus(member);
+  return member.repoAccess === "denied" ? `${presence}, no access to the team repo` : presence;
 }
 
 // Tree rows: the `before` rule is the trunk (stopping at the elbow on the last row), `after` the
@@ -131,6 +136,7 @@ const TeamMemberRow = memo(function TeamMemberRow(props: {
 }) {
   const { member } = props;
   const status = memberStatus(member);
+  const noRepoAccess = member.repoAccess === "denied";
   return (
     <li className="relative pl-3 before:absolute before:top-0 before:left-0 before:h-full before:w-px before:bg-sidebar-border last:before:h-1/2 after:absolute after:top-1/2 after:left-0 after:h-px after:w-2 after:bg-sidebar-border">
       <Link
@@ -143,6 +149,7 @@ const TeamMemberRow = memo(function TeamMemberRow(props: {
           provider={member.activity.provider}
           working={member.online && member.activity.working}
           online={member.online}
+          sad={noRepoAccess}
         />
         <span
           className={cn(
@@ -153,6 +160,11 @@ const TeamMemberRow = memo(function TeamMemberRow(props: {
           {member.name}
           {props.isSelf ? <span className="text-sidebar-muted-foreground"> (you)</span> : null}
         </span>
+        {noRepoAccess ? (
+          <span aria-hidden className="max-w-[55%] shrink truncate text-xs text-destructive">
+            No repo access
+          </span>
+        ) : null}
         <span className="sr-only">, {status}</span>
       </Link>
     </li>

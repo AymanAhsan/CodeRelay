@@ -83,6 +83,7 @@ import * as TeamHubDocker from "./teamHub/TeamHubDocker.ts";
 import * as TeamHubNetwork from "./teamHub/TeamHubNetwork.ts";
 import * as TeamHubService from "./teamHub/TeamHubService.ts";
 import * as TeamHubActivityReporter from "./teamHub/TeamHubActivityReporter.ts";
+import * as TeamHubRepoAccessReporter from "./teamHub/TeamHubRepoAccessReporter.ts";
 import { teamHubHttpApiLayer } from "./teamHub/http.ts";
 import * as TeamHubDelegationService from "./teamHub/TeamHubDelegationService.ts";
 import * as TeamHubTaskDecisionService from "./teamHub/TeamHubTaskDecisionService.ts";
@@ -648,6 +649,7 @@ const TeamHubRuntimeDependenciesLive = Layer.mergeAll(
   TeamHubTaskDecisionService.layer,
   TeamHubDelegationService.layer,
   TeamHubActivityReporter.layer,
+  TeamHubRepoAccessReporter.layer,
 ).pipe(Layer.provideMerge(RuntimeMiscDependenciesLive));
 
 const RuntimeDependenciesLive = TeamHubTaskDecisionService.automaticTasksLayer.pipe(

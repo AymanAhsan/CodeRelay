@@ -7,6 +7,7 @@ import {
   TEAM_HUB_PROTOCOL_VERSION,
   TeamHubClientMessage,
   type TeamHubActivity,
+  type TeamHubRepoAccess,
 } from "@t3tools/contracts/teamHub";
 import { ThreadId } from "@t3tools/contracts";
 import { HubError, HubStore } from "./store.ts";
@@ -97,6 +98,8 @@ export async function createHubServer(
   // Last activity each member's server reported. Kept after they disconnect so the sidebar
   // still shows which agent they used last.
   const activity = new Map<string, TeamHubActivity>();
+  // Whether each member's server could open the team repository, kept the same way.
+  const repoAccess = new Map<string, TeamHubRepoAccess>();
   const online = (teamId: string) =>
     new Set(
       [...connections]
@@ -104,9 +107,14 @@ export async function createHubServer(
         .map((item) => item.member.id),
     );
   const snapshot = (member: Connected["member"]) =>
-    store.snapshot(member, online(member.team_id), activity);
+    store.snapshot(member, online(member.team_id), activity, repoAccess);
   /** Applies a client message and reports whether the team needs a fresh snapshot. */
   const apply = (member: Connected["member"], message: TeamHubClientMessage) => {
+    if (message.type === "set_repo_access") {
+      if (repoAccess.get(member.id) === message.access) return false;
+      repoAccess.set(member.id, message.access);
+      return true;
+    }
     if (message.type !== "set_activity") {
       store.publish(member, message);
       return true;
@@ -204,6 +212,8 @@ export async function createHubServer(
         const member = authenticate(store, request);
         const input = await body(request);
         store.updateRepo(member, string(input.repo, "repository"));
+        // Earlier checks were against the old repository; each server reports again.
+        for (const { id } of snapshot(member).members) repoAccess.delete(id);
         broadcast(member.team_id);
         return json(response, 200, { ok: true });
       }
@@ -213,6 +223,7 @@ export async function createHubServer(
         const memberId = string(input.memberId, "member ID");
         store.removeMember(member, member.team_id, memberId);
         activity.delete(memberId);
+        repoAccess.delete(memberId);
         for (const connection of connections) {
           if (connection.member.id === memberId) {
             connections.delete(connection);

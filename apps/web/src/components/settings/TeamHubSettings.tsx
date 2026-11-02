@@ -599,6 +599,9 @@ function ConnectedTeamHub({
                     {member.id === snapshot.selfId ? (
                       <span className="text-xs text-muted-foreground">You</span>
                     ) : null}
+                    {member.repoAccess === "denied" ? (
+                      <span className="text-xs text-destructive">No access to the team repo</span>
+                    ) : null}
                   </p>
                   {member.domains.length > 0 ? (
                     <p className="truncate font-mono text-xs text-muted-foreground">
