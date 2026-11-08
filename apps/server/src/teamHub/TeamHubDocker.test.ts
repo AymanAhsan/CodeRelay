@@ -17,9 +17,9 @@ const encoder = new TextEncoder();
 type Reply = { stdout?: string; stderr?: string; code?: number; delayMs?: number } | "not-found";
 
 /** A fake `docker` CLI: each command gets the reply its handler returns. */
-const dockerWith = (handler: (args: ReadonlyArray<string>) => Reply) => {
+const dockerWith = (handler: (args: ReadonlyArray<string>) => Reply, tag?: string) => {
   const calls: Array<ReadonlyArray<string>> = [];
-  const layer = TeamHubDocker.layer.pipe(
+  const layer = (tag === undefined ? TeamHubDocker.layer : TeamHubDocker.layerWithTag(tag)).pipe(
     Layer.provide(
       Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
@@ -80,7 +80,7 @@ describe("TeamHubDocker.start", () => {
 
   it.effect("times out a stalled image download", () =>
     Effect.gen(function* () {
-      const { layer } = dockerWith(() => ({ delayMs: 700_000 }));
+      const { layer } = dockerWith((args) => (args[0] === "pull" ? {} : { delayMs: 700_000 }));
       const fiber = yield* start(layer).pipe(Effect.forkChild);
       yield* TestClock.adjust("10 minutes");
       assert.deepStrictEqual(yield* Fiber.join(fiber), {
@@ -108,7 +108,7 @@ describe("TeamHubDocker.start", () => {
         address: "http://localhost:9090",
         setupLink: "http://localhost:8080/setup#token=abc",
       });
-      const run = calls[0] ?? [];
+      const run = calls.find((args) => args[0] === "run") ?? [];
       assert.strictEqual(run.at(-1), "ghcr.io/aymanahsan/coderelay-hub:edge");
       assert.notInclude(run, "--pull");
       assert.includeMembers([...run], ["--name", "my-hub", "9090:8080", "my-hub-data:/data"]);
@@ -176,12 +176,71 @@ describe("TeamHubDocker.start", () => {
       );
       const result = yield* start(layer);
       assert.strictEqual(result.status === "failed" ? result.reason : "started", "port-in-use");
-      assert.deepStrictEqual(calls[1], ["rm", "-f", createdId]);
+      assert.deepStrictEqual(calls.at(-1), ["rm", "-f", createdId]);
 
       // A name conflict creates nothing, so nothing of that name is removed.
       const conflict = dockerWith(() => ({ code: 125, stderr: "is already in use by container" }));
       yield* start(conflict.layer);
-      assert.strictEqual(conflict.calls.length, 1);
+      assert.isFalse(conflict.calls.some((args) => args[0] === "rm"));
+    }),
+  );
+
+  it.effect("falls back to edge when the version's image was never published", () =>
+    Effect.gen(function* () {
+      const { calls, layer } = dockerWith(
+        (args) =>
+          args[0] === "run" && args.at(-1)?.endsWith(":0.0.45")
+            ? {
+                code: 125,
+                stderr:
+                  'docker: Error response from daemon: failed to resolve reference "ghcr.io/aymanahsan/coderelay-hub:0.0.45": ghcr.io/aymanahsan/coderelay-hub:0.0.45: not found',
+              }
+            : { stdout: "Team hub listening" },
+        "0.0.45",
+      );
+      assert.strictEqual((yield* start(layer)).status, "started");
+      const runs = calls.filter((args) => args[0] === "run").map((args) => args.at(-1));
+      assert.deepStrictEqual(runs, [
+        "ghcr.io/aymanahsan/coderelay-hub:0.0.45",
+        "ghcr.io/aymanahsan/coderelay-hub:edge",
+      ]);
+      assert.deepStrictEqual(
+        calls.map((args) => args[0]),
+        ["run", "pull", "run", "logs"],
+      );
+    }),
+  );
+
+  it.effect("refreshes edge before running it, and still starts when the pull fails", () =>
+    Effect.gen(function* () {
+      const { calls, layer } = dockerWith((args) =>
+        args[0] === "pull"
+          ? { code: 1, stderr: "lookup ghcr.io: no such host" }
+          : { stdout: "Team hub listening" },
+      );
+      assert.strictEqual((yield* start(layer)).status, "started");
+      assert.deepStrictEqual(calls[0], ["pull", "ghcr.io/aymanahsan/coderelay-hub:edge"]);
+      assert.strictEqual(calls[1]?.[0], "run");
+    }),
+  );
+
+  it.effect("does not pull a versioned image separately", () =>
+    Effect.gen(function* () {
+      const { calls, layer } = dockerWith(() => ({ stdout: "Team hub listening" }), "1.2.3");
+      assert.strictEqual((yield* start(layer)).status, "started");
+      assert.isFalse(calls.some((args) => args[0] === "pull"));
+    }),
+  );
+
+  it.effect("does not retry with edge when the registry cannot be reached", () =>
+    Effect.gen(function* () {
+      const { calls, layer } = dockerWith(
+        () => ({ code: 125, stderr: "lookup ghcr.io: no such host" }),
+        "0.0.45",
+      );
+      const result = yield* start(layer);
+      assert.strictEqual(result.status === "failed" ? result.reason : "started", "image-missing");
+      assert.strictEqual(calls.length, 1);
     }),
   );
 
