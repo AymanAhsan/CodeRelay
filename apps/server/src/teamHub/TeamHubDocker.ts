@@ -1,4 +1,5 @@
 import {
+  TEAM_HUB_DOCKER_IMAGE,
   teamHubDockerRunArgs,
   type TeamHubStartFailureReason,
   type TeamHubStartInput,
@@ -20,6 +21,10 @@ const SETUP_LINK_ATTEMPTS = 10;
 const SETUP_LINK_RETRY_DELAY = Duration.millis(500);
 // Enough for any Docker error, small enough to send to a client.
 const OUTPUT_LIMIT = 2_000;
+
+// The registry answered but has no image under that tag, unlike a network failure.
+const TAG_NOT_PUBLISHED_PATTERN = /manifest unknown|failed to resolve reference.*: not found/i;
+const FALLBACK_TAG = "edge";
 
 const SETUP_LINK_PATTERN = /One-time setup link: (\S+)/;
 const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
@@ -77,81 +82,104 @@ export class TeamHubDocker extends Context.Service<
   }
 >()("t3/teamHub/TeamHubDocker") {}
 
-const make = Effect.gen(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+const make = (tag: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const docker = (args: ReadonlyArray<string>, timeout: Duration.Duration) =>
-    Effect.gen(function* () {
-      const child = yield* spawner.spawn(ChildProcess.make("docker", args));
-      const [stdout, stderr, code] = yield* Effect.all(
-        [
-          collectText(child.stdout),
-          collectText(child.stderr),
-          child.exitCode.pipe(Effect.map(Number)),
-        ],
-        { concurrency: "unbounded" },
+    const docker = (args: ReadonlyArray<string>, timeout: Duration.Duration) =>
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(ChildProcess.make("docker", args));
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            collectText(child.stdout),
+            collectText(child.stderr),
+            child.exitCode.pipe(Effect.map(Number)),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return { _tag: "exited", code, stdout, stderr } satisfies DockerRun as DockerRun;
+      }).pipe(
+        Effect.scoped,
+        Effect.timeout(timeout),
+        Effect.catchTag("TimeoutError", () => Effect.succeed<DockerRun>({ _tag: "timed-out" })),
+        // Failing to spawn at all means there is no `docker` to run. Node can also
+        // throw synchronously for a bad PATH entry, which surfaces as a defect.
+        Effect.catch(() => Effect.succeed<DockerRun>({ _tag: "not-installed" })),
+        Effect.catchDefect(() => Effect.succeed<DockerRun>({ _tag: "not-installed" })),
       );
-      return { _tag: "exited", code, stdout, stderr } satisfies DockerRun as DockerRun;
-    }).pipe(
-      Effect.scoped,
-      Effect.timeout(timeout),
-      Effect.catchTag("TimeoutError", () => Effect.succeed<DockerRun>({ _tag: "timed-out" })),
-      // Failing to spawn at all means there is no `docker` to run. Node can also
-      // throw synchronously for a bad PATH entry, which surfaces as a defect.
-      Effect.catch(() => Effect.succeed<DockerRun>({ _tag: "not-installed" })),
-      Effect.catchDefect(() => Effect.succeed<DockerRun>({ _tag: "not-installed" })),
-    );
 
-  const readSetupLink = (name: string) =>
-    Effect.gen(function* () {
-      for (let attempt = 0; attempt < SETUP_LINK_ATTEMPTS; attempt += 1) {
-        const logs = yield* docker(["logs", name], LOGS_TIMEOUT);
-        if (logs._tag === "exited") {
-          const match = SETUP_LINK_PATTERN.exec(`${logs.stdout}\n${logs.stderr}`);
-          if (match?.[1] !== undefined) return match[1];
-          // Listening without a link means the volume already holds a team.
-          if (/Team hub listening/.test(logs.stdout)) return null;
+    const readSetupLink = (name: string) =>
+      Effect.gen(function* () {
+        for (let attempt = 0; attempt < SETUP_LINK_ATTEMPTS; attempt += 1) {
+          const logs = yield* docker(["logs", name], LOGS_TIMEOUT);
+          if (logs._tag === "exited") {
+            const match = SETUP_LINK_PATTERN.exec(`${logs.stdout}\n${logs.stderr}`);
+            if (match?.[1] !== undefined) return match[1];
+            // Listening without a link means the volume already holds a team.
+            if (/Team hub listening/.test(logs.stdout)) return null;
+          }
+          yield* Effect.sleep(SETUP_LINK_RETRY_DELAY);
         }
-        yield* Effect.sleep(SETUP_LINK_RETRY_DELAY);
-      }
-      return null;
-    });
+        return null;
+      });
 
-  const start = (input: TeamHubStartInput): Effect.Effect<TeamHubStartResult> =>
-    Effect.gen(function* () {
-      const run = yield* docker(teamHubDockerRunArgs(input, hubDockerTag), RUN_TIMEOUT);
-      switch (run._tag) {
-        case "not-installed":
-          return { status: "failed", reason: "docker-not-installed", output: "" } as const;
-        case "timed-out":
-          return { status: "failed", reason: "timed-out", output: "" } as const;
-        case "exited": {
-          if (run.code !== 0) {
-            // Docker creates the container before it binds the port, so a failed
-            // run can leave one behind holding the name. Remove only the one this
-            // run created, by the id it printed, never another container of that name.
-            const createdId = run.stdout.trim();
-            if (CONTAINER_ID_PATTERN.test(createdId)) {
-              yield* docker(["rm", "-f", createdId], LOGS_TIMEOUT);
+    const start = (input: TeamHubStartInput): Effect.Effect<TeamHubStartResult> =>
+      Effect.gen(function* () {
+        // Edge moves with main, so refresh a cached copy first. A failed pull is
+        // ignored: offline, the cached image still starts.
+        const runFrom = (imageTag: string) =>
+          Effect.gen(function* () {
+            if (imageTag === FALLBACK_TAG) {
+              yield* docker(["pull", `${TEAM_HUB_DOCKER_IMAGE}:${imageTag}`], RUN_TIMEOUT);
             }
-            const output = trimOutput(run.stderr.length > 0 ? run.stderr : run.stdout);
+            return yield* docker(teamHubDockerRunArgs(input, imageTag), RUN_TIMEOUT);
+          });
+        let run = yield* runFrom(tag);
+        // A build can carry a version whose hub image was never published, such as a
+        // main build. The newest main image beats refusing to start.
+        if (
+          tag !== FALLBACK_TAG &&
+          run._tag === "exited" &&
+          run.code !== 0 &&
+          TAG_NOT_PUBLISHED_PATTERN.test(run.stderr)
+        ) {
+          run = yield* runFrom(FALLBACK_TAG);
+        }
+        switch (run._tag) {
+          case "not-installed":
+            return { status: "failed", reason: "docker-not-installed", output: "" } as const;
+          case "timed-out":
+            return { status: "failed", reason: "timed-out", output: "" } as const;
+          case "exited": {
+            if (run.code !== 0) {
+              // Docker creates the container before it binds the port, so a failed
+              // run can leave one behind holding the name. Remove only the one this
+              // run created, by the id it printed, never another container of that name.
+              const createdId = run.stdout.trim();
+              if (CONTAINER_ID_PATTERN.test(createdId)) {
+                yield* docker(["rm", "-f", createdId], LOGS_TIMEOUT);
+              }
+              const output = trimOutput(run.stderr.length > 0 ? run.stderr : run.stdout);
+              return {
+                status: "failed",
+                reason: reasonOf(run.stderr || run.stdout),
+                output,
+              } as const;
+            }
             return {
-              status: "failed",
-              reason: reasonOf(run.stderr || run.stdout),
-              output,
+              status: "started",
+              name: input.name,
+              address: `http://localhost:${String(input.hubPort)}`,
+              setupLink: yield* readSetupLink(input.name),
             } as const;
           }
-          return {
-            status: "started",
-            name: input.name,
-            address: `http://localhost:${String(input.hubPort)}`,
-            setupLink: yield* readSetupLink(input.name),
-          } as const;
         }
-      }
-    });
+      });
 
-  return TeamHubDocker.of({ start });
-});
+    return TeamHubDocker.of({ start });
+  });
 
-export const layer = Layer.effect(TeamHubDocker, make);
+/** Starts hubs from the given image tag, falling back to edge when it is not published. */
+export const layerWithTag = (tag: string) => Layer.effect(TeamHubDocker, make(tag));
+
+export const layer = layerWithTag(hubDockerTag);
