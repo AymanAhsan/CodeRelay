@@ -222,6 +222,7 @@ export type TeamHubAction =
   | { readonly type: "unexposeHub"; readonly input: TeamHubNetworkInput }
   | { readonly type: "checkHub"; readonly input: TeamHubCheckInput }
   | { readonly type: "startHub"; readonly input: TeamHubStartInput }
+  | { readonly type: "restartHub"; readonly input: TeamHubStartInput }
   | { readonly type: "leave" }
   | { readonly type: "publish"; readonly input: TeamHubClientMessage }
   | { readonly type: "invite" }
@@ -395,6 +396,14 @@ export const runTeamHubAction = Effect.fn("clientRuntime.teamHub.action")(functi
         timeoutMs: 11 * 60_000,
         url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.startHub(),
         request: ({ client, headers }) => client.startHub({ headers, payload: action.input }),
+      });
+    case "restartHub":
+      return yield* executeAuthenticatedEnvironmentHttpRequest({
+        ...common,
+        // The server waits up to 30s for Docker, then a few seconds for the hub's link.
+        timeoutMs: 45_000,
+        url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.restartHub(),
+        request: ({ client, headers }) => client.restartHub({ headers, payload: action.input }),
       });
     case "checkHub":
       return yield* executeAuthenticatedEnvironmentHttpRequest({

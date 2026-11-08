@@ -70,6 +70,7 @@ function ReachNotice({
   presentation,
   busy = false,
   onRetry,
+  onRestart,
   onShare,
   onUsePort,
   children,
@@ -77,6 +78,7 @@ function ReachNotice({
   presentation: ReachPresentation;
   busy?: boolean;
   onRetry: () => void;
+  onRestart?: () => void;
   onShare?: () => void;
   onUsePort?: (servePort: number) => void;
   children?: ReactNode;
@@ -130,6 +132,19 @@ function ReachNotice({
                       onClick={onRetry}
                     >
                       {action.label}
+                    </Button>
+                  );
+                case "restart":
+                  return (
+                    <Button key={action.label} size="xs" disabled={busy} onClick={onRestart}>
+                      {busy ? (
+                        <>
+                          <Spinner size="sm" />
+                          Restarting…
+                        </>
+                      ) : (
+                        action.label
+                      )}
                     </Button>
                   );
                 case "share":
@@ -372,32 +387,39 @@ function HubStart({
   onStarted: (started: StartedHub) => void;
 }) {
   const command = useAtomCommand(teamHubActionCommand, { reportFailure: false });
-  const [busy, setBusy] = useState(false);
+  // Which request is in flight, so only its button shows the spinner.
+  const [busy, setBusy] = useState<"start" | "restart" | null>(null);
   const [failure, setFailure] = useState<{
     readonly result: StartFailure;
     readonly input: { readonly hubPort: number; readonly name: string };
+    readonly restarting: boolean;
   } | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
   const validName = isValidContainerName(name);
 
-  const start = async () => {
-    if (!validName || busy) return;
+  // Starting creates a container; restarting runs the one that already holds the name.
+  const run = async (type: "startHub" | "restartHub") => {
+    if (!validName || busy !== null) return;
     const input = { hubPort, name };
-    setBusy(true);
-    setFailure(null);
+    setBusy(type === "startHub" ? "start" : "restart");
+    // A restart is asked for from the failure notice, which keeps the button's spinner.
+    if (type === "startHub") setFailure(null);
     setRequestError(null);
-    const outcome = await command({ prepared, action: { type: "startHub", input } });
-    setBusy(false);
+    const outcome = await command({ prepared, action: { type, input } });
+    setBusy(null);
     if (!AsyncResult.isSuccess(outcome) || !isStartResult(outcome.value)) {
+      setFailure(null);
       setRequestError(REQUEST_FAILED);
       return;
     }
     if (outcome.value.status === "failed") {
-      setFailure({ result: outcome.value, input });
+      setFailure({ result: outcome.value, input, restarting: type === "restartHub" });
       return;
     }
+    setFailure(null);
     onStarted(outcome.value);
   };
+  const start = () => run("startHub");
 
   return (
     <div className="space-y-2">
@@ -423,8 +445,8 @@ function HubStart({
             />
           </div>
         </label>
-        <Button size="xs" disabled={busy || !validName} onClick={() => void start()}>
-          {busy ? (
+        <Button size="xs" disabled={busy !== null || !validName} onClick={() => void start()}>
+          {busy === "start" ? (
             <>
               <Spinner size="sm" />
               Starting hub (first download may take several minutes)…
@@ -446,8 +468,10 @@ function HubStart({
       ) : null}
       {failure ? (
         <ReachNotice
-          presentation={presentStartFailure(failure.result, failure.input)}
+          presentation={presentStartFailure(failure.result, failure.input, failure.restarting)}
+          busy={busy === "restart"}
           onRetry={() => void start()}
+          onRestart={() => void run("restartHub")}
         >
           {failure.result.output.length > 0 ? (
             <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 font-mono text-xs break-all whitespace-pre-wrap">
