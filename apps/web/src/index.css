@@ -1156,7 +1156,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --destructive: var(--error);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
-  --ring: var(--primary);
+  --ring: #2563eb;
   --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
@@ -1198,6 +1198,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --popover: color-mix(in srgb, var(--background) 97%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
     --primary: oklch(0.58 0.19 20);
+    --ring: #60a5fa;
     --secondary: --alpha(var(--color-white) / 3%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 3%);
