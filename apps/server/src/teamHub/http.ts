@@ -170,6 +170,13 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "restartHub",
+        Effect.fn("teamHub.restartHub")(function* ({ payload }) {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          return yield* docker.restart(payload);
+        }),
+      )
+      .handle(
         "checkHub",
         Effect.fn("teamHub.checkHub")(function* ({ payload }) {
           yield* requireEnvironmentScope(AuthAccessWriteScope);

@@ -255,6 +255,116 @@ describe("TeamHubDocker.start", () => {
     }),
   );
 });
+
+const restart = (layer: Layer.Layer<TeamHubDocker.TeamHubDocker>) =>
+  Effect.gen(function* () {
+    const docker = yield* TeamHubDocker.TeamHubDocker;
+    return yield* docker.restart({ hubPort: 8080, name: "my-hub" });
+  }).pipe(Effect.provide(layer));
+
+describe("TeamHubDocker.restart", () => {
+  it.effect("starts the existing container and reports the port it was created with", () =>
+    Effect.gen(function* () {
+      const { calls, layer } = dockerWith((args) => {
+        switch (args[0]) {
+          case "port":
+            return { stdout: "0.0.0.0:9090\n[::]:9090\n" };
+          case "inspect":
+            return { stdout: "2026-11-08T12:00:00.123456789Z\n" };
+          case "logs":
+            return { stdout: "Team hub listening on 0.0.0.0:8080\n" };
+          default:
+            return { stdout: "my-hub\n" };
+        }
+      });
+      assert.deepStrictEqual(yield* restart(layer), {
+        status: "started",
+        name: "my-hub",
+        // The input said 8080, but the container keeps the port it was created with.
+        address: "http://localhost:9090",
+        setupLink: null,
+      });
+      assert.deepStrictEqual(calls[0], ["start", "my-hub"]);
+      assert.isFalse(calls.some((args) => args[0] === "run" || args[0] === "pull"));
+    }),
+  );
+
+  it.effect("ignores a setup link printed before the latest start", () =>
+    Effect.gen(function* () {
+      const startedAt = "2026-11-08T12:00:00.123456789Z";
+      // Docker keeps a container's logs across restarts; `--since` is what drops the old run's.
+      const { calls, layer } = dockerWith((args) => {
+        switch (args[0]) {
+          case "port":
+            return { stdout: "0.0.0.0:8080\n" };
+          case "inspect":
+            return { stdout: `${startedAt}\n` };
+          case "logs":
+            return args.includes(startedAt)
+              ? { stdout: "Team hub listening on 0.0.0.0:8080\n" }
+              : {
+                  stdout:
+                    "Team hub listening on 0.0.0.0:8080\nOne-time setup link: http://localhost:8080/setup#token=stale\n",
+                };
+          default:
+            return {};
+        }
+      });
+      const result = yield* restart(layer);
+      assert.strictEqual(result.status === "started" ? result.setupLink : "failed", null);
+      assert.deepStrictEqual(
+        calls.find((args) => args[0] === "logs"),
+        ["logs", "--since", startedAt, "my-hub"],
+      );
+    }),
+  );
+
+  it.effect("falls back to the requested port when Docker will not say which one", () =>
+    Effect.gen(function* () {
+      const { layer } = dockerWith((args) => {
+        switch (args[0]) {
+          case "port":
+            return { code: 1, stderr: "no public port" };
+          case "logs":
+            return { stdout: "Team hub listening on 0.0.0.0:8080\n" };
+          default:
+            return { stdout: "2026-11-08T12:00:00Z\n" };
+        }
+      });
+      const result = yield* restart(layer);
+      assert.strictEqual(
+        result.status === "started" ? result.address : "failed",
+        "http://localhost:8080",
+      );
+    }),
+  );
+
+  it.effect("passes Docker's message through when the container cannot start", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<readonly [string, TeamHubStartFailureReason]> = [
+        ["Error response from daemon: No such container: my-hub", "command-failed"],
+        ["Bind for 0.0.0.0:8080 failed: port is already allocated", "port-in-use"],
+        ["Cannot connect to the Docker daemon", "docker-not-running"],
+      ];
+      for (const [stderr, reason] of cases) {
+        const { layer } = dockerWith(() => ({ code: 1, stderr: `${stderr}\n` }));
+        assert.deepStrictEqual(yield* restart(layer), { status: "failed", reason, output: stderr });
+      }
+    }),
+  );
+
+  it.effect("says Docker is not installed when there is no docker to run", () =>
+    Effect.gen(function* () {
+      const { layer } = dockerWith(() => "not-found");
+      assert.deepStrictEqual(yield* restart(layer), {
+        status: "failed",
+        reason: "docker-not-installed",
+        output: "",
+      });
+    }),
+  );
+});
+
 describe("hub image versions", () => {
   it("pins stable builds and uses edge for development and prereleases", () => {
     assert.strictEqual(teamHubDockerTag("1.2.3"), "1.2.3");

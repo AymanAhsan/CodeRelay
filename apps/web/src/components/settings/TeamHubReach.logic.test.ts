@@ -211,3 +211,18 @@ it("explains failed downloads without asking users to build", () => {
   expect(result.detail).toContain("internet connection");
   expect(result.actions).toEqual([]);
 });
+
+it("offers to restart the container that holds the name, and blames its own port after a restart", () => {
+  const input = { hubPort: 9090, name: "team" };
+  expect(
+    presentStartFailure({ status: "failed", reason: "name-in-use", output: "" }, input).actions,
+  ).toEqual([{ kind: "restart", label: "Restart hub" }]);
+
+  const refused = presentStartFailure(
+    { status: "failed", reason: "port-in-use", output: "" },
+    input,
+    true,
+  );
+  expect(refused.title).not.toContain("9090");
+  expect(refused.actions).toEqual([]);
+});

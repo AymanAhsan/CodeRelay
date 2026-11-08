@@ -16,6 +16,8 @@ import { hubDockerTag } from "./image.ts";
 // The first run downloads the image, including on slower connections.
 const RUN_TIMEOUT = Duration.minutes(10);
 const LOGS_TIMEOUT = Duration.seconds(5);
+// Starting a container that already exists never downloads anything.
+const RESTART_TIMEOUT = Duration.seconds(30);
 // The hub prints its setup link right after it starts listening.
 const SETUP_LINK_ATTEMPTS = 10;
 const SETUP_LINK_RETRY_DELAY = Duration.millis(500);
@@ -28,6 +30,7 @@ const FALLBACK_TAG = "edge";
 
 const SETUP_LINK_PATTERN = /One-time setup link: (\S+)/;
 const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
+const PUBLISHED_PORT_PATTERN = /:(\d+)\s*$/m;
 
 // Matched against Docker's stderr, most specific first.
 const FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, TeamHubStartFailureReason]> = [
@@ -79,6 +82,12 @@ export class TeamHubDocker extends Context.Service<
      * sees what Docker said rather than a generic error.
      */
     readonly start: (input: TeamHubStartInput) => Effect.Effect<TeamHubStartResult>;
+    /**
+     * Starts an existing hub container again, for when `start` found its name taken.
+     * The container keeps the port and volume it was created with, so the address
+     * comes from Docker, not from the input.
+     */
+    readonly restart: (input: TeamHubStartInput) => Effect.Effect<TeamHubStartResult>;
   }
 >()("t3/teamHub/TeamHubDocker") {}
 
@@ -108,10 +117,13 @@ const make = (tag: string) =>
         Effect.catchDefect(() => Effect.succeed<DockerRun>({ _tag: "not-installed" })),
       );
 
-    const readSetupLink = (name: string) =>
+    // `since` limits the logs to the container's latest run: Docker keeps a
+    // container's output across restarts, and an earlier run's link is stale.
+    const readSetupLink = (name: string, since?: string) =>
       Effect.gen(function* () {
+        const logsArgs = since === undefined ? ["logs", name] : ["logs", "--since", since, name];
         for (let attempt = 0; attempt < SETUP_LINK_ATTEMPTS; attempt += 1) {
-          const logs = yield* docker(["logs", name], LOGS_TIMEOUT);
+          const logs = yield* docker(logsArgs, LOGS_TIMEOUT);
           if (logs._tag === "exited") {
             const match = SETUP_LINK_PATTERN.exec(`${logs.stdout}\n${logs.stderr}`);
             if (match?.[1] !== undefined) return match[1];
@@ -176,7 +188,54 @@ const make = (tag: string) =>
         }
       });
 
-    return TeamHubDocker.of({ start });
+    // The first line is the IPv4 binding; the IPv6 one repeats its port.
+    const publishedPort = (name: string) =>
+      docker(["port", name, "8080/tcp"], LOGS_TIMEOUT).pipe(
+        Effect.map((run) =>
+          run._tag === "exited" && run.code === 0
+            ? (PUBLISHED_PORT_PATTERN.exec(run.stdout)?.[1] ?? null)
+            : null,
+        ),
+      );
+
+    const startedAt = (name: string) =>
+      docker(["inspect", "--format", "{{.State.StartedAt}}", name], LOGS_TIMEOUT).pipe(
+        Effect.map((run) => {
+          const text = run._tag === "exited" && run.code === 0 ? run.stdout.trim() : "";
+          return text.length > 0 ? text : null;
+        }),
+      );
+
+    const restart = (input: TeamHubStartInput): Effect.Effect<TeamHubStartResult> =>
+      Effect.gen(function* () {
+        const run = yield* docker(["start", input.name], RESTART_TIMEOUT);
+        switch (run._tag) {
+          case "not-installed":
+            return { status: "failed", reason: "docker-not-installed", output: "" } as const;
+          case "timed-out":
+            return { status: "failed", reason: "timed-out", output: "" } as const;
+          case "exited": {
+            if (run.code !== 0) {
+              const output = run.stderr.length > 0 ? run.stderr : run.stdout;
+              return {
+                status: "failed",
+                reason: reasonOf(output),
+                output: trimOutput(output),
+              } as const;
+            }
+            const since = yield* startedAt(input.name);
+            return {
+              status: "started",
+              name: input.name,
+              address: `http://localhost:${(yield* publishedPort(input.name)) ?? String(input.hubPort)}`,
+              // Without a start time the logs cannot be told apart from an earlier run's.
+              setupLink: since === null ? null : yield* readSetupLink(input.name, since),
+            } as const;
+          }
+        }
+      });
+
+    return TeamHubDocker.of({ start, restart });
   });
 
 /** Starts hubs from the given image tag, falling back to edge when it is not published. */

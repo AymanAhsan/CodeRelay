@@ -736,6 +736,14 @@ class EnvironmentTeamHubHttpApi extends HttpApiGroup.make("teamHub")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("restartHub", "/api/team-hub/restart", {
+      headers: OptionalBearerHeaders,
+      payload: TeamHubStartInput,
+      success: TeamHubStartResult,
+      error: EnvironmentTeamHubErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("checkHub", "/api/team-hub/check", {
       headers: OptionalBearerHeaders,
       payload: TeamHubCheckInput,

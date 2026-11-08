@@ -23,6 +23,7 @@ const DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/";
 export type ReachAction =
   | { readonly kind: "link"; readonly label: string; readonly href: string }
   | { readonly kind: "retry"; readonly label: string }
+  | { readonly kind: "restart"; readonly label: string }
   | { readonly kind: "share"; readonly label: string }
   | { readonly kind: "use-port"; readonly label: string; readonly servePort: number }
   | { readonly kind: "copy"; readonly label: string; readonly value: string };
@@ -61,12 +62,26 @@ export function isValidContainerName(name: string): boolean {
   return name.length <= 64 && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name);
 }
 
-/** What to say when Docker refused to start the hub. Docker's own message is shown beside it. */
+/**
+ * What to say when Docker refused to start the hub. Docker's own message is shown
+ * beside it. `restarting` is for a failed restart of an existing container, which
+ * keeps the port it was created with, so the port the person typed is not the cause.
+ */
 export function presentStartFailure(
   failure: Extract<TeamHubStartResult, { status: "failed" }>,
   input: TeamHubStartInput,
+  restarting = false,
 ): ReachPresentation {
   const base = { tone: "error" as const };
+  if (restarting && failure.reason === "port-in-use") {
+    return {
+      ...base,
+      title: `${input.name} can't start because its port is already in use.`,
+      detail:
+        "Something else on this computer is using the port this hub was created with. Free it, or pick another container name to start a new hub.",
+      actions: [],
+    };
+  }
   switch (failure.reason) {
     case "docker-not-installed":
       return {
@@ -95,9 +110,7 @@ export function presentStartFailure(
         ...base,
         title: `A container named ${input.name} already exists.`,
         detail: "Pick another name, or start that container again if it is your hub.",
-        actions: [
-          { kind: "copy", label: "Copy restart command", value: `docker start ${input.name}` },
-        ],
+        actions: [{ kind: "restart", label: "Restart hub" }],
       };
     case "port-in-use":
       return {
