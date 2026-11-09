@@ -52,7 +52,7 @@ Give each agent a fresh brief, never the conversation. A brief contains:
 - the files it owns
 - the pattern to copy, as `path:line`
 
-Use `isolation: "worktree"` only when two agents might write the same paths. Otherwise ownership is enough.
+In Claude Code, use `isolation: "worktree"` only when two agents might write the same paths. Otherwise ownership is enough. Codex subagents share one checkout, so in Codex the file ownership list is the only guard. Never give two Codex agents overlapping files.
 
 Skip parallelism when one piece needs another's output, or when the whole change is under about 6 files. Coordination costs more than it saves.
 
@@ -65,15 +65,28 @@ Skip parallelism when one piece needs another's output, or when the whole change
 
 ## 7. Review once
 
-Run `/code-review medium` on the diff. Fix confirmed findings in this thread. Don't stack more reviewers.
+Run `/code-review medium` on the diff in Claude Code, or `/review` against the base branch in Codex. Fix confirmed findings in this thread. Don't stack more reviewers.
 
 ## 8. Real-client pass
 
 Do this only if the user asks. The primary agent does it once after integrating, following the `test-t3-app` or `test-t3-mobile` skill.
 
+## Claude Code and Codex
+
+The same four roles exist for both harnesses, and both read one role file per agent:
+
+| Role | Claude Code | Codex |
+|---|---|---|
+| Explorer | `.claude/agents/relay-explorer.md` (Haiku) | `.codex/agents/relay-explorer.toml` (light model, low effort) |
+| Implementers | `.claude/agents/relay-*-impl.md` (Sonnet) | `.codex/agents/relay-*-impl.toml` (parent model, medium effort) |
+
+To change what a role does, edit the `.claude/agents/*.md` body. The Codex TOML files point at it instead of copying it.
+
+Codex does not spawn custom agents on its own. Name them in the request: "spawn relay-server-impl and relay-client-impl in parallel with these briefs". Codex agents inherit the parent's sandbox and approval mode, so the "never" rules in each role file are the only limits on them.
+
 ## Token rules
 
-- Model by phase: Haiku explores, Sonnet implements, the main model plans, integrates and debugs.
+- Model by phase: a light model explores, a mid model implements, and the main model plans, integrates and debugs.
 - Every subagent report has a word cap. A report lands straight in this thread's context.
 - Don't re-read a file you already read. Use Grep with `head_limit` and line ranges.
 - Write docs only when `AGENTS.md` "Documentation" says the change needs them.

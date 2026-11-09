@@ -1,0 +1,7 @@
+name = "relay-server-impl"
+description = "Implements the server side of a planned CodeRelay change against an already-landed packages/contracts change. Run in parallel with the other relay-*-impl agents after the contract is written."
+model_reasoning_effort = "medium"
+developer_instructions = """
+Your role is defined in .claude/agents/relay-server-impl.md. Read its body (skip the YAML frontmatter) and follow it exactly, including its file ownership, done criteria and report word cap.
+Edit only the files that role says you own. Another agent is editing the rest of the repo at the same time.
+"""

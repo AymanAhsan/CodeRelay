@@ -18,7 +18,7 @@ Areas and where they live:
 Rules:
 
 - Stay inside the area in your brief. Never read `.repos/` unless the brief asks for an upstream pattern.
-- Use Grep with `head_limit` and read line ranges, not whole files.
+- Search with capped output (Grep `head_limit`, or `rg -m`) and read line ranges, not whole files.
 - Do not suggest a design. Report what exists.
 
 Report in 200 words or fewer:
