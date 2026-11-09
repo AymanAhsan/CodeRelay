@@ -1,4 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - Exercise the actual Docker Node script against an isolated SQLite fixture.
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -11,6 +16,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { teamHubDockerTag, type TeamHubStartFailureReason } from "@t3tools/contracts/teamHub";
 
 import * as TeamHubDocker from "./TeamHubDocker.ts";
+import { HubStore } from "../../../hub/src/store.ts";
 
 const encoder = new TextEncoder();
 
@@ -361,6 +367,125 @@ describe("TeamHubDocker.restart", () => {
         reason: "docker-not-installed",
         output: "",
       });
+    }),
+  );
+});
+
+describe("TeamHubDocker.setupLink", () => {
+  it.effect(
+    "creates new teams in the existing image without changing the first team's membership",
+    () =>
+      Effect.gen(function* () {
+        const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hub-create-local-"));
+        const store = new HubStore(dir);
+        try {
+          const { layer } = dockerWith((args) => {
+            if (args[0] === "port") return { stdout: "0.0.0.0:8080\n" };
+            assert.strictEqual(args[0], "exec");
+            const result = NodeChildProcess.spawnSync(process.execPath, args.slice(3), {
+              env: { ...process.env, HUB_DATA_DIR: dir },
+              encoding: "utf8",
+            });
+            assert.strictEqual(result.status, 0, result.stderr);
+            return { stdout: result.stdout };
+          });
+          yield* Effect.gen(function* () {
+            const docker = yield* TeamHubDocker.TeamHubDocker;
+            const input = {
+              name: "my-hub",
+              hubPort: 8080,
+              url: "https://hub.example.com",
+              displayName: "Alice",
+              teamName: "First team",
+              repo: "repo",
+            };
+            const first = store.authenticate(yield* docker.createTeam(input));
+            store.publish(first, { type: "post_note", text: "Keep this history" });
+            const second = store.authenticate(
+              yield* docker.createTeam({
+                ...input,
+                teamName: "Alice's second team",
+                displayName: "Bob",
+              }),
+            );
+            assert.notStrictEqual(first.team_id, second.team_id);
+            assert.strictEqual(second.name, "Bob");
+            assert.strictEqual(second.role, "admin");
+            assert.strictEqual(
+              store.snapshot(first, new Set()).notes[0]?.text,
+              "Keep this history",
+            );
+            assert.strictEqual(store.snapshot(second, new Set()).team.name, "Alice's second team");
+            assert.deepStrictEqual(store.snapshot(second, new Set()).notes, []);
+          }).pipe(Effect.provide(layer));
+        } finally {
+          store.close();
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }
+      }),
+  );
+
+  const lookup = (layer: Layer.Layer<TeamHubDocker.TeamHubDocker>) =>
+    Effect.gen(function* () {
+      const docker = yield* TeamHubDocker.TeamHubDocker;
+      return yield* docker.setupLink({ hubPort: 8080, name: "my-hub" });
+    }).pipe(Effect.provide(layer));
+
+  it.effect(
+    "recovers an interrupted setup and stops returning the token immediately after bootstrap",
+    () =>
+      Effect.gen(function* () {
+        const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hub-setup-lookup-"));
+        let store = new HubStore(dir);
+        try {
+          const token = store.setupToken!;
+          store.close();
+          store = new HubStore(dir);
+          const { calls, layer } = dockerWith((args) => {
+            if (args[0] === "port") return { stdout: "0.0.0.0:8080\n" };
+            if (args[0] === "exec") {
+              // Execute the actual in-container script against a real hub database.
+              const result = NodeChildProcess.spawnSync(process.execPath, args.slice(3), {
+                env: { ...process.env, HUB_DATA_DIR: dir },
+                encoding: "utf8",
+              });
+              assert.strictEqual(result.status, 0, result.stderr);
+              return { stdout: result.stdout };
+            }
+            assert.fail("Lookup must not start, restart, or read logs from the container");
+          });
+          assert.deepStrictEqual(yield* lookup(layer), {
+            setupLink: `http://localhost:8080/setup#token=${token}`,
+            canCreateTeam: true,
+          });
+          store.bootstrap(token, "Team", "repo", "Alice");
+          assert.deepStrictEqual(yield* lookup(layer), { setupLink: null, canCreateTeam: true });
+          assert.deepStrictEqual(calls[1]?.slice(0, 3), ["exec", "my-hub", "node"]);
+        } finally {
+          store.close();
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }
+      }),
+  );
+
+  it.effect("does not return a token for another port or unavailable Docker", () =>
+    Effect.gen(function* () {
+      for (const reply of [{ stdout: "0.0.0.0:9090\n" }, "not-found"] as const) {
+        const { calls, layer } = dockerWith(() => reply);
+        assert.deepStrictEqual(yield* lookup(layer), { setupLink: null, canCreateTeam: false });
+        assert.strictEqual(calls.length, 1);
+      }
+    }),
+  );
+
+  it.effect("returns no link when the container is stopped or its database cannot be read", () =>
+    Effect.gen(function* () {
+      for (const reply of [{ code: 1 }, { stdout: "invalid-token" }, "not-found"] as const) {
+        const { layer } = dockerWith((args) =>
+          args[0] === "port" ? { stdout: "0.0.0.0:8080\n" } : reply,
+        );
+        assert.deepStrictEqual(yield* lookup(layer), { setupLink: null, canCreateTeam: false });
+      }
     }),
   );
 });

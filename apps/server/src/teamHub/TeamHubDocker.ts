@@ -4,12 +4,15 @@ import {
   type TeamHubStartFailureReason,
   type TeamHubStartInput,
   type TeamHubStartResult,
+  type TeamHubSetupLinkResult,
+  type TeamHubCreateLocalTeamInput,
 } from "@t3tools/contracts/teamHub";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { hubDockerTag } from "./image.ts";
 
@@ -31,6 +34,61 @@ const FALLBACK_TAG = "edge";
 const SETUP_LINK_PATTERN = /One-time setup link: (\S+)/;
 const CONTAINER_ID_PATTERN = /^[0-9a-f]{64}$/;
 const PUBLISHED_PORT_PATTERN = /:(\d+)\s*$/m;
+
+// Run against the existing image too: no image upgrade or hub restart is needed.
+// Read current state rather than logs, which can still contain a consumed token.
+const READ_SETUP_TOKEN = `
+const { DatabaseSync } = require("node:sqlite");
+const { join } = require("node:path");
+const { createHmac, createHash } = require("node:crypto");
+const db = new DatabaseSync(join(process.env.HUB_DATA_DIR ?? "/data", "hub.sqlite"), { readOnly: true });
+try {
+  db.exec("BEGIN");
+  const key = db.prepare("SELECT value FROM meta WHERE key='signing_key'").get()?.value;
+  const setup = db.prepare("SELECT value FROM meta WHERE key='setup_hash'").get()?.value;
+  if (key && setup && !db.prepare("SELECT 1 FROM teams LIMIT 1").get()) {
+    const token = createHmac("sha256", key).update("first-team-setup").digest("base64url");
+    if (createHash("sha256").update(token).digest("hex") === setup) process.stdout.write(token);
+  } else if (db.prepare("SELECT 1 FROM teams LIMIT 1").get()) {
+    process.stdout.write("configured");
+  }
+} finally { db.close(); }
+`;
+
+// Docker access is hub-operator authority. Use the image's store API so existing
+// images work too, without reviving setup tokens or changing any old membership.
+const CREATE_LOCAL_TEAM = `
+import { HubStore } from "./apps/hub/src/store.ts";
+const input = JSON.parse(process.argv[1]);
+const store = new HubStore(process.env.HUB_DATA_DIR ?? "/data");
+try {
+  const admin = store.db.prepare("SELECT * FROM members WHERE role='admin' AND revoked_at IS NULL LIMIT 1").get();
+  const result = store.setupToken
+    ? store.bootstrap(store.setupToken, input.teamName, input.repo, input.displayName)
+    : store.createTeam({ ...admin, name: input.displayName }, input.teamName, input.repo);
+  process.stdout.write(JSON.stringify({ credential: result.credential }));
+} finally { store.close(); }
+`;
+
+export class TeamHubDockerError extends Schema.TaggedError<TeamHubDockerError>()(
+  "TeamHubDockerError",
+  {
+    reason: Schema.String,
+  },
+) {}
+
+const decodeCreatedMembership = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ credential: Schema.NonEmptyString })),
+);
+const encodeLocalTeam = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      teamName: Schema.String,
+      repo: Schema.String,
+      displayName: Schema.String,
+    }),
+  ),
+);
 
 // Matched against Docker's stderr, most specific first.
 const FAILURE_PATTERNS: ReadonlyArray<readonly [RegExp, TeamHubStartFailureReason]> = [
@@ -88,6 +146,11 @@ export class TeamHubDocker extends Context.Service<
      * comes from Docker, not from the input.
      */
     readonly restart: (input: TeamHubStartInput) => Effect.Effect<TeamHubStartResult>;
+    /** Reads an unused setup link from a running local Docker hub without restarting it. */
+    readonly setupLink: (input: TeamHubStartInput) => Effect.Effect<TeamHubSetupLinkResult>;
+    readonly createTeam: (
+      input: TeamHubCreateLocalTeamInput,
+    ) => Effect.Effect<string, TeamHubDockerError>;
   }
 >()("t3/teamHub/TeamHubDocker") {}
 
@@ -235,7 +298,65 @@ const make = (tag: string) =>
         }
       });
 
-    return TeamHubDocker.of({ start, restart });
+    const setupLink = Effect.fn("TeamHubDocker.setupLink")(function* (input: TeamHubStartInput) {
+      // A manually selected port may belong to a different hub than the named container.
+      if ((yield* publishedPort(input.name)) !== String(input.hubPort))
+        return { setupLink: null, canCreateTeam: false };
+      const run = yield* docker(
+        [
+          "exec",
+          input.name,
+          "node",
+          "--disable-warning=ExperimentalWarning",
+          "-e",
+          READ_SETUP_TOKEN,
+        ],
+        LOGS_TIMEOUT,
+      );
+      const token = run._tag === "exited" && run.code === 0 ? run.stdout.trim() : "";
+      return {
+        setupLink: /^[A-Za-z0-9_-]{43}$/.test(token)
+          ? `http://localhost:${String(input.hubPort)}/setup#token=${token}`
+          : null,
+        canCreateTeam: token === "configured" || /^[A-Za-z0-9_-]{43}$/.test(token),
+      };
+    });
+
+    const createTeam = Effect.fn("TeamHubDocker.createTeam")(function* (
+      input: TeamHubCreateLocalTeamInput,
+    ) {
+      if ((yield* publishedPort(input.name)) !== String(input.hubPort)) {
+        return yield* new TeamHubDockerError({ reason: "Docker hub port does not match" });
+      }
+      const run = yield* docker(
+        [
+          "exec",
+          input.name,
+          "node",
+          "--disable-warning=ExperimentalWarning",
+          "--input-type=module",
+          "-e",
+          CREATE_LOCAL_TEAM,
+          encodeLocalTeam({
+            teamName: input.teamName,
+            repo: input.repo,
+            displayName: input.displayName,
+          }),
+        ],
+        LOGS_TIMEOUT,
+      );
+      if (run._tag !== "exited" || run.code !== 0) {
+        return yield* new TeamHubDockerError({
+          reason: "Could not create a team in the Docker hub",
+        });
+      }
+      const result = yield* decodeCreatedMembership(run.stdout).pipe(
+        Effect.mapError(() => new TeamHubDockerError({ reason: "Invalid Docker hub response" })),
+      );
+      return result.credential;
+    });
+
+    return TeamHubDocker.of({ start, restart, setupLink, createTeam });
   });
 
 /** Starts hubs from the given image tag, falling back to edge when it is not published. */

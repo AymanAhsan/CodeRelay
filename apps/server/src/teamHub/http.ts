@@ -44,6 +44,16 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "createLocalTeam",
+        Effect.fn("teamHub.createLocalTeam")(function* ({ payload }) {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          yield* hub
+            .createLocalTeam(payload)
+            .pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
+          return yield* state;
+        }),
+      )
+      .handle(
         "bootstrap",
         Effect.fn("teamHub.bootstrap")(function* ({ payload }) {
           yield* requireEnvironmentScope(AuthAccessWriteScope);
@@ -167,6 +177,13 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("teamHub.startHub")(function* ({ payload }) {
           yield* requireEnvironmentScope(AuthAccessWriteScope);
           return yield* docker.start(payload);
+        }),
+      )
+      .handle(
+        "setupLink",
+        Effect.fn("teamHub.setupLink")(function* ({ payload }) {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          return yield* docker.setupLink(payload);
         }),
       )
       .handle(
