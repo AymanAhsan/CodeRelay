@@ -1,6 +1,7 @@
 import type {
   TeamHubCheckInput,
   TeamHubStartInput,
+  TeamHubCreateLocalTeamInput,
   TeamHubClientMessage,
   TeamHubJoinInput,
   TeamHubBootstrapInput,
@@ -223,6 +224,8 @@ export type TeamHubAction =
   | { readonly type: "checkHub"; readonly input: TeamHubCheckInput }
   | { readonly type: "startHub"; readonly input: TeamHubStartInput }
   | { readonly type: "restartHub"; readonly input: TeamHubStartInput }
+  | { readonly type: "setupLink"; readonly input: TeamHubStartInput }
+  | { readonly type: "createLocalTeam"; readonly input: TeamHubCreateLocalTeamInput }
   | { readonly type: "leave" }
   | { readonly type: "publish"; readonly input: TeamHubClientMessage }
   | { readonly type: "invite" }
@@ -396,6 +399,21 @@ export const runTeamHubAction = Effect.fn("clientRuntime.teamHub.action")(functi
         timeoutMs: 11 * 60_000,
         url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.startHub(),
         request: ({ client, headers }) => client.startHub({ headers, payload: action.input }),
+      });
+    case "createLocalTeam":
+      return yield* executeAuthenticatedEnvironmentHttpRequest({
+        ...common,
+        timeoutMs: 20_000,
+        url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.createLocalTeam(),
+        request: ({ client, headers }) =>
+          client.createLocalTeam({ headers, payload: action.input }),
+      });
+    case "setupLink":
+      return yield* executeAuthenticatedEnvironmentHttpRequest({
+        ...common,
+        timeoutMs: 15_000,
+        url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.setupLink(),
+        request: ({ client, headers }) => client.setupLink({ headers, payload: action.input }),
       });
     case "restartHub":
       return yield* executeAuthenticatedEnvironmentHttpRequest({

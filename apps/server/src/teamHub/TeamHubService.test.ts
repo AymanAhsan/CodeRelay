@@ -15,6 +15,7 @@ import { HubStore } from "../../../hub/src/store.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TeamHubService, layer } from "./TeamHubService.ts";
+import * as TeamHubDocker from "./TeamHubDocker.ts";
 
 describe("local team hub connector", () => {
   it.effect("bootstraps through the local service, stores membership, and posts a note", () =>
@@ -22,6 +23,23 @@ describe("local team hub connector", () => {
       Effect.gen(function* () {
         const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-local-team-hub-"));
         const store = new HubStore(dir);
+        const dockerLayer = Layer.succeed(
+          TeamHubDocker.TeamHubDocker,
+          TeamHubDocker.TeamHubDocker.of({
+            start: () => Effect.die("unused"),
+            restart: () => Effect.die("unused"),
+            setupLink: () => Effect.die("unused"),
+            createTeam: (input) =>
+              Effect.sync(() => {
+                // Model Docker's operator boundary; the Docker tests execute the real script.
+                return store.createTeam(
+                  store.authenticate(new TextDecoder().decode(secrets.get("original-membership"))),
+                  input.teamName,
+                  input.repo,
+                ).credential;
+              }),
+          }),
+        );
         const server = yield* Effect.promise(() =>
           createHubServer(store, { host: "127.0.0.1", port: 0 }),
         );
@@ -77,6 +95,7 @@ describe("local team hub connector", () => {
           });
           const credential = new TextDecoder().decode(secrets.get("team-hub-membership"));
           const member = store.authenticate(credential);
+          secrets.set("original-membership", new TextEncoder().encode(credential));
           const connected = yield* nextState((state) => state.status === "connected");
           expect(connected.snapshot?.selfId).toBe(member.id);
           yield* hub.publish({
@@ -177,9 +196,26 @@ describe("local team hub connector", () => {
             error: null,
           });
           expect(secrets.has("team-hub-membership")).toBe(false);
+          yield* hub.createLocalTeam({
+            url: `http://127.0.0.1:${server.port}`,
+            name: "my-hub",
+            hubPort: server.port,
+            teamName: "Second team",
+            repo: "github.com/example/second",
+            displayName: "Alice",
+          });
+          const second = yield* nextState((state) => state.status === "connected");
+          expect(second.snapshot?.team.name).toBe("Second team");
+          expect(second.snapshot?.selfId).not.toBe(member.id);
+          expect(store.snapshot(member, new Set()).team.name).toBe("Engineering");
+          expect(store.snapshot(member, new Set()).notes[0]?.text).toBe("Ready to pair");
         }).pipe(
           Effect.provide(
-            layer.pipe(Layer.provide(ServerSettings.layerTest()), Layer.provide(secretLayer)),
+            layer.pipe(
+              Layer.provide(ServerSettings.layerTest()),
+              Layer.provide(secretLayer),
+              Layer.provide(dockerLayer),
+            ),
           ),
         );
       }),

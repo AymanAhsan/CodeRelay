@@ -70,6 +70,8 @@ import {
   TeamHubRemoveMemberInput,
   TeamHubStartInput,
   TeamHubStartResult,
+  TeamHubSetupLinkResult,
+  TeamHubCreateLocalTeamInput,
   TeamHubUpdateRepoInput,
   TeamHubRevokeInviteInput,
   TeamHubState,
@@ -732,6 +734,22 @@ class EnvironmentTeamHubHttpApi extends HttpApiGroup.make("teamHub")
       headers: OptionalBearerHeaders,
       payload: TeamHubStartInput,
       success: TeamHubStartResult,
+      error: EnvironmentTeamHubErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("createLocalTeam", "/api/team-hub/create-local-team", {
+      headers: OptionalBearerHeaders,
+      payload: TeamHubCreateLocalTeamInput,
+      success: TeamHubState,
+      error: EnvironmentTeamHubErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("setupLink", "/api/team-hub/setup-link", {
+      headers: OptionalBearerHeaders,
+      payload: TeamHubStartInput,
+      success: TeamHubSetupLinkResult,
       error: EnvironmentTeamHubErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

@@ -2,6 +2,7 @@
 import type {
   TeamHubActivity,
   TeamHubBootstrapInput,
+  TeamHubCreateLocalTeamInput,
   TeamHubClientMessage,
   TeamHubInviteRecord,
   TeamHubJoinInput,
@@ -23,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamHubDocker from "./TeamHubDocker.ts";
 
 const CREDENTIAL_NAME = "team-hub-membership";
 const encoder = new TextEncoder();
@@ -51,6 +53,9 @@ export class TeamHubService extends Context.Service<
       readonly displayName: string;
     }) => Effect.Effect<void, TeamHubError>;
     readonly bootstrap: (input: TeamHubBootstrapInput) => Effect.Effect<void, TeamHubError>;
+    readonly createLocalTeam: (
+      input: TeamHubCreateLocalTeamInput,
+    ) => Effect.Effect<void, TeamHubError>;
     readonly leave: Effect.Effect<void, TeamHubError>;
     readonly publish: (message: TeamHubClientMessage) => Effect.Effect<void, TeamHubError>;
     readonly publishCheckpoint: (input: {
@@ -93,6 +98,7 @@ export class TeamHubService extends Context.Service<
 const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const docker = yield* TeamHubDocker.TeamHubDocker;
   let state: TeamHubState = { url: null, status: "disconnected", snapshot: null, error: null };
   const listeners = new Set<(state: TeamHubState) => void>();
   const setState = (next: TeamHubState) => {
@@ -268,20 +274,47 @@ const make = Effect.gen(function* () {
     connect();
   });
 
+  const normalizeUrl = (address: string) =>
+    Effect.try({
+      try: () => {
+        const parsed = new URL(address);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+          throw new Error("Invalid scheme");
+        parsed.pathname = "/";
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed;
+      },
+      catch: (cause) => new TeamHubError({ reason: "Invalid team hub address", cause }),
+    });
+
+  const saveMembership = Effect.fn("TeamHubService.saveMembership")(function* (
+    url: URL,
+    result: string,
+  ) {
+    yield* secrets
+      .set(CREDENTIAL_NAME, encoder.encode(result))
+      .pipe(
+        Effect.mapError(
+          (cause) => new TeamHubError({ reason: "Cannot save team membership", cause }),
+        ),
+      );
+    yield* settings
+      .updateSettings({ teamHubUrl: url.toString() })
+      .pipe(
+        Effect.mapError(
+          (cause) => new TeamHubError({ reason: "Cannot save team hub address", cause }),
+        ),
+      );
+    disconnect();
+    credential = result;
+    setState({ url: url.toString(), status: "disconnected", snapshot: null, error: null });
+    connect();
+  });
+
   const enroll = (input: TeamHubJoinInput | TeamHubBootstrapInput) =>
     Effect.gen(function* () {
-      const url = yield* Effect.try({
-        try: () => {
-          const parsed = new URL(input.url);
-          if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
-            throw new Error("Invalid scheme");
-          parsed.pathname = "/";
-          parsed.search = "";
-          parsed.hash = "";
-          return parsed;
-        },
-        catch: (cause) => new TeamHubError({ reason: "Invalid team hub address", cause }),
-      });
+      const url = yield* normalizeUrl(input.url);
       const result = yield* Effect.tryPromise({
         try: async () => {
           const response = await fetch(
@@ -305,23 +338,7 @@ const make = Effect.gen(function* () {
         },
         catch: (cause) => new TeamHubError({ reason: "Could not join team hub", cause }),
       });
-      yield* secrets
-        .set(CREDENTIAL_NAME, encoder.encode(result))
-        .pipe(
-          Effect.mapError(
-            (cause) => new TeamHubError({ reason: "Cannot save team membership", cause }),
-          ),
-        );
-      yield* settings
-        .updateSettings({ teamHubUrl: url.toString() })
-        .pipe(
-          Effect.mapError(
-            (cause) => new TeamHubError({ reason: "Cannot save team hub address", cause }),
-          ),
-        );
-      credential = result;
-      setState({ url: url.toString(), status: "disconnected", snapshot: null, error: null });
-      connect();
+      yield* saveMembership(url, result);
     });
 
   const leave = Effect.gen(function* () {
@@ -354,6 +371,13 @@ const make = Effect.gen(function* () {
     }),
     join: enroll,
     bootstrap: enroll,
+    createLocalTeam: Effect.fn("TeamHubService.createLocalTeam")(function* (input) {
+      const url = yield* normalizeUrl(input.url);
+      const membership = yield* docker
+        .createTeam(input)
+        .pipe(Effect.mapError((cause) => new TeamHubError({ reason: cause.reason, cause })));
+      yield* saveMembership(url, membership);
+    }),
     leave,
     publish: (message) => request("/api/publish", message),
     publishCheckpoint: (input) =>

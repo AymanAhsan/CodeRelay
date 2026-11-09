@@ -16,14 +16,14 @@ import {
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { TeamHubInvite } from "@t3tools/contracts/teamHub";
+import type { TeamHubInvite, TeamHubStartInput } from "@t3tools/contracts/teamHub";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { TriangleAlertIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { cn } from "~/lib/utils";
@@ -230,6 +230,9 @@ function ConnectedTeamHub({
   const result = useAtomValue(query);
   const state = Option.getOrNull(AsyncResult.value(result));
   const [joinLink, setJoinLink] = useState("");
+  const prefillSetupLink = useCallback((link: string) => {
+    setJoinLink((current) => (current.trim() ? current : link));
+  }, []);
   const [displayName, setDisplayName] = useState("");
   const [settingUp, setSettingUp] = useState(initialMode === "setup");
   const [teamName, setTeamName] = useState("");
@@ -248,6 +251,7 @@ function ConnectedTeamHub({
   // The address the shared hub answers on, once it does. Setup uses it in place of
   // whatever address the setup link printed.
   const [shareAddress, setShareAddress] = useState<string | null>(null);
+  const [localHub, setLocalHub] = useState<TeamHubStartInput | null>(null);
   const parsedLink = useMemo(() => parseTeamHubLink(joinLink), [joinLink]);
   const sharing = settingUp && reach !== "other";
   const command = useAtomCommand(teamHubActionCommand, { reportFailure: false });
@@ -300,6 +304,23 @@ function ConnectedTeamHub({
     snapshot?.members.find((member) => member.id === memberId)?.name ?? "Teammate";
 
   const submit = () => {
+    if (sharing && localHub !== null && shareAddress !== null) {
+      if (!displayName.trim() || !teamName.trim() || !repo.trim()) {
+        setError("Enter your name, team name, and repository.");
+        return;
+      }
+      void act({
+        type: "createLocalTeam",
+        input: {
+          ...localHub,
+          url: shareAddress,
+          displayName: displayName.trim(),
+          teamName: teamName.trim(),
+          repo: repo.trim(),
+        },
+      });
+      return;
+    }
     if (!parsedLink || !displayName.trim() || (settingUp && (!teamName.trim() || !repo.trim()))) {
       setError("Enter a valid hub link and all required fields.");
       return;
@@ -341,7 +362,7 @@ function ConnectedTeamHub({
           title={settingUp ? "Set up a hub" : "Join a team"}
           description={
             settingUp
-              ? "Create the first team with the setup link printed by your hub."
+              ? "Create a new team on your hub. Existing teams are kept."
               : "Join a team with the invite link from its admin."
           }
           control={
@@ -371,6 +392,7 @@ function ConnectedTeamHub({
                   if (value === "public" || value === "private" || value === "other") {
                     setReach(value);
                     setShareAddress(null);
+                    setLocalHub(null);
                   }
                 }}
               >
@@ -392,7 +414,8 @@ function ConnectedTeamHub({
                   prepared={prepared}
                   exposure={reach}
                   onAddress={setShareAddress}
-                  onSetupLink={setJoinLink}
+                  onSetupLink={prefillSetupLink}
+                  onLocalHub={setLocalHub}
                 />
               )}
             </div>
@@ -424,18 +447,24 @@ function ConnectedTeamHub({
               submit();
             }}
           >
-            <Input
-              size="sm"
-              aria-label={settingUp ? "Hub setup link" : "Team invite link"}
-              placeholder={
-                settingUp
-                  ? "https://hub.example.com/setup#token=…"
-                  : "https://hub.example.com/join#token=…"
-              }
-              value={joinLink}
-              onChange={(event) => setJoinLink(event.target.value)}
-            />
-            {sharing && shareAddress !== null && parsedLink !== null && (
+            {sharing && localHub !== null ? (
+              <p className="text-xs text-muted-foreground">
+                Your hub is ready. Create a new team here without a setup link.
+              </p>
+            ) : (
+              <Input
+                size="sm"
+                aria-label={settingUp ? "Hub setup link" : "Team invite link"}
+                placeholder={
+                  settingUp
+                    ? "https://hub.example.com/setup#token=…"
+                    : "https://hub.example.com/join#token=…"
+                }
+                value={joinLink}
+                onChange={(event) => setJoinLink(event.target.value)}
+              />
+            )}
+            {sharing && localHub === null && shareAddress !== null && parsedLink !== null && (
               <p className="text-xs text-muted-foreground">
                 Teammates will use {shareAddress}, not {parsedLink.url}.
               </p>

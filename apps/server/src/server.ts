@@ -454,6 +454,7 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
 const TeamHubServiceLayerLive = TeamHubService.layer.pipe(
   Layer.provide(ServerSettingsLayerLive),
   Layer.provide(ServerSecretStore.layer),
+  Layer.provide(TeamHubDocker.layer),
 );
 
 const TeamHubNetworkLayerLive = TeamHubNetwork.layer.pipe(Layer.provide(FetchHttpClient.layer));

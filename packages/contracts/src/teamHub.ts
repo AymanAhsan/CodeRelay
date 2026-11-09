@@ -255,6 +255,23 @@ export const TeamHubStartInput = Schema.Struct({
 });
 export type TeamHubStartInput = typeof TeamHubStartInput.Type;
 
+export const TeamHubCreateLocalTeamInput = Schema.Struct({
+  ...TeamHubStartInput.fields,
+  url: Text,
+  displayName: Text,
+  teamName: Text,
+  repo: Text,
+});
+export type TeamHubCreateLocalTeamInput = typeof TeamHubCreateLocalTeamInput.Type;
+
+export const TeamHubSetupLinkResult = Schema.Struct({
+  /** Null when Docker is unavailable or the hub has no pending setup. */
+  setupLink: Schema.NullOr(Schema.String),
+  /** This server can administer the running Docker hub, including after first setup. */
+  canCreateTeam: Schema.Boolean,
+});
+export type TeamHubSetupLinkResult = typeof TeamHubSetupLinkResult.Type;
+
 /**
  * The `docker` arguments that start a hub. Server and client share them so the
  * command a person copies is exactly the one the app runs. Each name gets its own

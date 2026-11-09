@@ -7,8 +7,10 @@ import {
   TeamHubNetworkState,
   TeamHubReachability,
   TeamHubStartResult,
+  TeamHubSetupLinkResult,
   type TeamHubExposure,
   type TeamHubNetworkInput,
+  type TeamHubStartInput,
 } from "@t3tools/contracts/teamHub";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -55,6 +57,7 @@ import {
 const isNetworkState = Schema.is(TeamHubNetworkState);
 const isReachability = Schema.is(TeamHubReachability);
 const isStartResult = Schema.is(TeamHubStartResult);
+const isSetupLinkResult = Schema.is(TeamHubSetupLinkResult);
 
 const TONE_ICON = {
   info: InfoIcon,
@@ -520,12 +523,14 @@ export function HubSharing({
   exposure,
   onAddress,
   onSetupLink,
+  onLocalHub,
 }: {
   prepared: PreparedConnection;
   exposure: TeamHubExposure;
   onAddress: (address: string | null) => void;
-  /** Receives the setup link printed by a hub the app just started. */
+  /** Receives the unused setup link from a new or already running Docker hub. */
   onSetupLink: (link: string) => void;
+  onLocalHub: (input: TeamHubStartInput | null) => void;
 }) {
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(prepared.environmentId));
   const imageTag =
@@ -538,6 +543,24 @@ export function HubSharing({
   const [servePort, setServePort] = useState(DEFAULT_SHARE_PORT);
   const input = useMemo(() => ({ hubPort, servePort, exposure }), [hubPort, servePort, exposure]);
   const { shown, busy, requestError, recheck, run } = useHubNetwork(prepared, input);
+
+  const command = useAtomCommand(teamHubActionCommand, { reportFailure: false });
+  useEffect(() => {
+    let cancelled = false;
+    if (!isValidContainerName(containerName)) return;
+    void command({
+      prepared,
+      action: { type: "setupLink", input: { name: containerName, hubPort } },
+    }).then((outcome) => {
+      if (!cancelled && AsyncResult.isSuccess(outcome) && isSetupLinkResult(outcome.value)) {
+        onLocalHub(outcome.value.canCreateTeam ? { name: containerName, hubPort } : null);
+        if (outcome.value.setupLink !== null) onSetupLink(outcome.value.setupLink);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [command, prepared, containerName, hubPort, onSetupLink, onLocalHub]);
 
   const [manualAddress, setManualAddress] = useState<string | null>(null);
 
@@ -612,6 +635,7 @@ export function HubSharing({
             onName={setContainerName}
             onStarted={(next) => {
               setStarted(next);
+              onLocalHub({ name: next.name, hubPort: Number(new URL(next.address).port) });
               if (next.setupLink !== null) onSetupLink(next.setupLink);
               recheck();
             }}
