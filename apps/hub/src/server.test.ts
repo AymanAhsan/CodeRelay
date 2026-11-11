@@ -20,6 +20,51 @@ function nextMessage(socket: WebSocket): Promise<unknown> {
 }
 
 describe("team hub server", () => {
+  it("allows only the team's owner to delete it and disconnects its teammates", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-delete-"));
+    dirs.push(dir);
+    const store = new HubStore(dir);
+    const owner = store.bootstrap(store.setupToken!, "Engineering", "repo", "Alice");
+    const admin = store.authenticate(owner.credential);
+    const teammate = store.join(store.createInvite(admin, owner.team.id).token, "Bob");
+    const other = store.createTeam(admin, "Other team", "other-repo");
+    const server = await createHubServer(store, { host: "127.0.0.1", port: 0 });
+    const remove = (credential: string, teamId: string) =>
+      fetch(`http://127.0.0.1:${server.port}/api/team/delete`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+        body: JSON.stringify({ teamId }),
+      });
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${server.port}/ws?version=${TEAM_HUB_PROTOCOL_VERSION}`,
+    );
+    try {
+      await new Promise<void>((resolve) => socket.once("open", resolve));
+      const initial = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "hello", credential: teammate.credential }));
+      await initial;
+      expect((await remove(teammate.credential, owner.team.id)).status).toBe(403);
+      expect((await remove(other.credential, owner.team.id)).status).toBe(403);
+      const closed = new Promise<number>((resolve) => socket.once("close", resolve));
+      const deleted = await remove(owner.credential, owner.team.id);
+      expect(deleted.status).toBe(200);
+      expect(await deleted.json()).toEqual({ empty: false });
+      expect(await closed).toBe(4003);
+      expect(() => store.authenticate(owner.credential)).toThrow("Invalid credential");
+      expect(() => store.authenticate(teammate.credential)).toThrow("Invalid credential");
+      expect(store.snapshot(store.authenticate(other.credential), new Set()).team).toEqual(
+        other.team,
+      );
+      const last = await remove(other.credential, other.team.id);
+      expect(last.status).toBe(200);
+      expect(await last.json()).toEqual({ empty: true });
+    } finally {
+      socket.terminate();
+      await server.close();
+      store.close();
+    }
+  });
+
   it("rejects conflicting file claims through the acknowledged publish endpoint", async () => {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-claim-"));
     dirs.push(dir);

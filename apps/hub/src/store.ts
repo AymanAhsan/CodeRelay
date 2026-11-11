@@ -214,6 +214,34 @@ export class HubStore {
     }
   }
 
+  deleteTeam(admin: MemberRow, teamId: string): { empty: boolean } {
+    if (admin.role !== "admin" || admin.team_id !== teamId) {
+      throw new HubError("Team owner required", 403);
+    }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const table of [
+        "claims",
+        "contract_changes",
+        "notes",
+        "summaries",
+        "tasks",
+        "invites",
+        "members",
+      ]) {
+        this.db.prepare(`DELETE FROM ${table} WHERE team_id=?`).run(teamId);
+      }
+      this.db.prepare("DELETE FROM teams WHERE id=?").run(teamId);
+      const empty = !this.db.prepare("SELECT 1 FROM teams LIMIT 1").get();
+      if (empty) this.db.exec("DELETE FROM meta WHERE key IN ('signing_key','setup_hash')");
+      this.db.exec("COMMIT");
+      return { empty };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   private createMember(teamId: string, name: string, role: "admin" | "member") {
     const credential = secret();
     const memberId = NodeCrypto.randomUUID();

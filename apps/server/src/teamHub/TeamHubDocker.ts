@@ -7,6 +7,7 @@ import {
   type TeamHubSetupLinkResult,
   type TeamHubCreateLocalTeamInput,
 } from "@t3tools/contracts/teamHub";
+import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -68,6 +69,41 @@ try {
     : store.createTeam({ ...admin, name: input.displayName }, input.teamName, input.repo);
   process.stdout.write(JSON.stringify({ credential: result.credential }));
 } finally { store.close(); }
+`;
+
+// Check the local database before associating a hub URL with a Docker container.
+const CHECK_HUB_TEAM = `
+const { DatabaseSync } = require("node:sqlite");
+const { join } = require("node:path");
+const db = new DatabaseSync(join(process.env.HUB_DATA_DIR ?? "/data", "hub.sqlite"), { readOnly: true });
+try {
+  const [teamId, credentialHash] = process.argv.slice(1);
+  const matches = credentialHash
+    ? db.prepare("SELECT 1 FROM members WHERE team_id=? AND credential_hash=? AND role='admin' AND revoked_at IS NULL").get(teamId, credentialHash)
+    : !db.prepare("SELECT 1 FROM teams LIMIT 1").get();
+  if (matches) process.stdout.write("yes");
+} finally { db.close(); }
+`;
+
+// Older hub images lack the HTTP delete route. With one team in the database,
+// stopping the container also closes every connection for that team.
+const DELETE_LAST_HUB_TEAM = `
+const { DatabaseSync } = require("node:sqlite");
+const { join } = require("node:path");
+const db = new DatabaseSync(join(process.env.HUB_DATA_DIR ?? "/data", "hub.sqlite"));
+try {
+  db.exec("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE");
+  const [teamId, credentialHash] = process.argv.slice(1);
+  const owner = db.prepare("SELECT 1 FROM members WHERE team_id=? AND credential_hash=? AND role='admin' AND revoked_at IS NULL").get(teamId, credentialHash);
+  if (owner && !db.prepare("SELECT 1 FROM teams WHERE id<>? LIMIT 1").get(teamId)) {
+    for (const table of ["claims", "contract_changes", "notes", "summaries", "tasks", "invites", "members"]) {
+      db.prepare("DELETE FROM " + table + " WHERE team_id=?").run(teamId);
+    }
+    db.prepare("DELETE FROM teams WHERE id=?").run(teamId);
+    db.exec("DELETE FROM meta WHERE key IN ('signing_key','setup_hash'); COMMIT");
+    process.stdout.write("yes");
+  }
+} finally { db.close(); }
 `;
 
 export class TeamHubDockerError extends Schema.TaggedError<TeamHubDockerError>()(
@@ -148,6 +184,16 @@ export class TeamHubDocker extends Context.Service<
     readonly restart: (input: TeamHubStartInput) => Effect.Effect<TeamHubStartResult>;
     /** Reads an unused setup link from a running local Docker hub without restarting it. */
     readonly setupLink: (input: TeamHubStartInput) => Effect.Effect<TeamHubSetupLinkResult>;
+    readonly findTeamContainer: (
+      teamId: string,
+      credential: string,
+    ) => Effect.Effect<string | null>;
+    readonly deleteLastTeam: (
+      id: string,
+      teamId: string,
+      credential: string,
+    ) => Effect.Effect<void, TeamHubDockerError>;
+    readonly removeEmptyContainer: (id: string) => Effect.Effect<void, TeamHubDockerError>;
     readonly createTeam: (
       input: TeamHubCreateLocalTeamInput,
     ) => Effect.Effect<string, TeamHubDockerError>;
@@ -356,7 +402,101 @@ const make = (tag: string) =>
       return result.credential;
     });
 
-    return TeamHubDocker.of({ start, restart, setupLink, createTeam });
+    const checkHubTeam = (id: string, args: ReadonlyArray<string>) =>
+      docker(
+        [
+          "exec",
+          id,
+          "node",
+          "--disable-warning=ExperimentalWarning",
+          "-e",
+          CHECK_HUB_TEAM,
+          "--",
+          ...args,
+        ],
+        LOGS_TIMEOUT,
+      ).pipe(
+        Effect.map((run) => run._tag === "exited" && run.code === 0 && run.stdout.trim() === "yes"),
+      );
+
+    const findTeamContainer = Effect.fn("TeamHubDocker.findTeamContainer")(function* (
+      teamId: string,
+      credential: string,
+    ) {
+      const running = yield* docker(
+        ["ps", "--no-trunc", "--format", "{{.ID}} {{.Image}}"],
+        LOGS_TIMEOUT,
+      );
+      if (running._tag !== "exited" || running.code !== 0) return null;
+      const credentialHash = NodeCrypto.createHash("sha256").update(credential).digest("hex");
+      let match: string | null = null;
+      for (const line of running.stdout.trim().split(/\r?\n/)) {
+        const [id, image] = line.split(" ");
+        if (
+          !id ||
+          !CONTAINER_ID_PATTERN.test(id) ||
+          !image?.startsWith(`${TEAM_HUB_DOCKER_IMAGE}:`)
+        ) {
+          continue;
+        }
+        if (yield* checkHubTeam(id, [teamId, credentialHash])) {
+          if (match) return null;
+          match = id;
+        }
+      }
+      return match;
+    });
+
+    const deleteLastTeam = Effect.fn("TeamHubDocker.deleteLastTeam")(function* (
+      id: string,
+      teamId: string,
+      credential: string,
+    ) {
+      const run = yield* docker(
+        [
+          "exec",
+          id,
+          "node",
+          "--disable-warning=ExperimentalWarning",
+          "-e",
+          DELETE_LAST_HUB_TEAM,
+          "--",
+          teamId,
+          NodeCrypto.createHash("sha256").update(credential).digest("hex"),
+        ],
+        LOGS_TIMEOUT,
+      );
+      if (run._tag !== "exited" || run.code !== 0 || run.stdout.trim() !== "yes") {
+        return yield* new TeamHubDockerError({
+          reason:
+            "This Docker hub could not delete the team. Shared hubs require an updated image.",
+        });
+      }
+    });
+
+    const removeEmptyContainer = Effect.fn("TeamHubDocker.removeEmptyContainer")(function* (
+      id: string,
+    ) {
+      if (!(yield* checkHubTeam(id, []))) {
+        return yield* new TeamHubDockerError({
+          reason: "Could not verify that the Docker hub is empty",
+        });
+      }
+      const run = yield* docker(["rm", "-f", id], RESTART_TIMEOUT);
+      if (run._tag !== "exited" || (run.code !== 0 && !/No such container/i.test(run.stderr))) {
+        return yield* new TeamHubDockerError({ reason: "Could not remove the team hub container" });
+      }
+    });
+
+    return TeamHubDocker.of({
+      start,
+      restart,
+      setupLink,
+      createTeam,
+      findTeamContainer,
+      deleteLastTeam,
+      removeEmptyContainer,
+    });
   });
 
 /** Starts hubs from the given image tag, falling back to edge when it is not published. */

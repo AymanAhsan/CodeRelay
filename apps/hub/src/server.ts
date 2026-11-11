@@ -208,6 +208,20 @@ export async function createHubServer(
         const member = authenticate(store, request);
         return json(response, 200, store.listInvites(member));
       }
+      if (request.method === "POST" && url.pathname === "/api/team/delete") {
+        const input = await body(request);
+        const member = authenticate(store, request);
+        const result = store.deleteTeam(member, string(input.teamId, "team ID"));
+        for (const connection of connections) {
+          if (connection.member.team_id === member.team_id) {
+            connections.delete(connection);
+            activity.delete(connection.member.id);
+            repoAccess.delete(connection.member.id);
+            connection.socket.close(4003, "Team deleted");
+          }
+        }
+        return json(response, 200, result);
+      }
       if (request.method === "POST" && url.pathname === "/api/team/repo") {
         const member = authenticate(store, request);
         const input = await body(request);
