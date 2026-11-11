@@ -14,11 +14,17 @@ import type {
 import { matchesDomain, TEAM_HUB_TASK_TEXT_MAX_LENGTH } from "@t3tools/contracts/teamHub";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
-import { WS_METHODS, type ThreadId } from "@t3tools/contracts";
+import {
+  WS_METHODS,
+  type EnvironmentId,
+  type ProjectCloneSnapshot,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import type { EnvironmentShellState } from "./shell.ts";
+import type { EnvironmentProject } from "./models.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcSubscriptionAtomFamily } from "./runtime.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -26,6 +32,40 @@ import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { makeEnvironmentHttpApiUrlBuilder } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+
+/** A hub can supply a network Git remote, but cannot select a path on a teammate's machine. */
+export function teamHubCloneRemote(repo: string): string | null {
+  const remote = repo.trim();
+  if (/^[\w.-]+@[\w.-]+:[^\s]+$/.test(remote)) return remote;
+  if (!/^(?:https?|ssh|git):\/\//i.test(remote)) return null;
+  try {
+    const url = new URL(remote);
+    return url.hostname && url.pathname.split("/").filter(Boolean).length >= 2 ? remote : null;
+  } catch {
+    return null;
+  }
+}
+
+export function findTeamHubProject(
+  repo: string,
+  environmentId: EnvironmentId,
+  projects: ReadonlyArray<EnvironmentProject>,
+  clones: ReadonlyArray<ProjectCloneSnapshot>,
+): EnvironmentProject | undefined {
+  const key = normalizeGitRemoteUrl(repo);
+  const candidates = projects.filter((project) => project.environmentId === environmentId);
+  const existing = candidates.find((project) => project.repositoryIdentity?.canonicalKey === key);
+  if (existing) return existing;
+
+  // Until a clone has checked out files, its project may have no repository identity.
+  return candidates.find(
+    (project) =>
+      !project.repositoryIdentity &&
+      clones.some(
+        (clone) => clone.projectId === project.id && normalizeGitRemoteUrl(clone.remoteUrl) === key,
+      ),
+  );
+}
 
 /** Uses the environment's existing RPC session, including reconnection. */
 export function createTeamHubStateAtomFamily<R, E>(

@@ -600,6 +600,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
+        } else if (detail.clone) {
+          dispatch({ _tag: "OpenCloneProject", request: detail.clone });
         } else if (detail.query !== undefined) {
           dispatch({
             _tag: "OpenSearch",
@@ -1841,6 +1843,32 @@ function OpenCommandPaletteDialog(props: {
     clearOpenIntent();
     openAddProjectFlow();
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "clone-project") return;
+    const { environmentId, remoteUrl } = openIntent;
+    clearOpenIntent();
+    setViewStack([]);
+    setLinkedThreadSearch(null);
+    setNewProjectFlow(null);
+    setAddProjectEnvironmentId(environmentId);
+    setAddProjectCloneFlow({
+      step: "confirm",
+      environmentId,
+      source: "url",
+      repositoryInput: remoteUrl,
+      repository: null,
+      remoteUrl,
+    });
+    pushPaletteView({
+      addonIcon: remoteProjectSourceIcon("url", ADDON_ICON_CLASS),
+      groups: [],
+      initialQuery: getCloneDestinationPath(
+        getAddProjectInitialQueryForEnvironment(environmentId),
+        getCloneDirectoryName(remoteUrl),
+      ),
+    });
+  }, [clearOpenIntent, getAddProjectInitialQueryForEnvironment, openIntent, pushPaletteView]);
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "new-thread-in" || projectThreadItems.length === 0) {

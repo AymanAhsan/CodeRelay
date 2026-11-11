@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { getCloneDirectoryName } from "@t3tools/client-runtime/operations/projects";
 import {
   canManageTeamHubTasks,
+  findTeamHubProject,
   formatTeamHubContract,
   incomingTeamHubTasks,
   queuedTeamHubTasksForOthers,
@@ -13,13 +15,14 @@ import {
   runTeamHubAction,
   teamHubActionErrorMessage,
   teamHubTaskTurn,
+  teamHubCloneRemote,
   type TeamHubAction,
 } from "@t3tools/client-runtime/state/team-hub";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { TeamHubInvite } from "@t3tools/contracts/teamHub";
 import * as Option from "effect/Option";
-import { CommonActions, useNavigation } from "@react-navigation/native";
+import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, TextInput, View } from "react-native";
@@ -27,6 +30,8 @@ import { Pressable, ScrollView, TextInput, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useProjects } from "../../state/entities";
+import { environmentProjectCloneListAtom } from "../../state/projectClones";
 import { usePreparedConnection } from "../../state/session";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -109,6 +114,8 @@ function AdminInvites({
 
 function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
   const navigation = useNavigation();
+  const projects = useProjects();
+  const clones = useAtomValue(environmentProjectCloneListAtom(prepared.environmentId));
   const query = teamHubStateAtom({ environmentId: prepared.environmentId, input: {} });
   const result = useAtomValue(query);
   const state = Option.getOrNull(AsyncResult.value(result));
@@ -171,6 +178,11 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
   };
   if (!state) return <Text>Loading team hub…</Text>;
   const snapshot = state.snapshot;
+  const teamProject = snapshot
+    ? findTeamHubProject(snapshot.team.repo, prepared.environmentId, projects, clones)
+    : undefined;
+  const cloneRemote = snapshot ? teamHubCloneRemote(snapshot.team.repo) : null;
+  const cloneDirectory = getCloneDirectoryName(cloneRemote);
   const self = snapshot?.members.find((member) => member.id === snapshot.selfId);
   const tasks = incomingTeamHubTasks(snapshot, { includeWaiting: true });
   const memberName = (memberId: string | null) =>
@@ -268,6 +280,47 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
                 ) : (
                   <>
                     <Text className="text-foreground-muted">{snapshot.team.repo}</Text>
+                    <Text className="text-foreground-muted">
+                      {prepared.label}
+                      {teamProject ? ` · ${teamProject.workspaceRoot}` : ""}
+                    </Text>
+                    {teamProject ? (
+                      <Action
+                        label="Open project"
+                        disabled={busy}
+                        onPress={() =>
+                          navigation.dispatch(
+                            StackActions.push("NewTaskDraft", {
+                              environmentId: prepared.environmentId,
+                              projectId: teamProject.id,
+                              title: teamProject.title,
+                              cloning: clones.some((clone) => clone.projectId === teamProject.id)
+                                ? "1"
+                                : undefined,
+                            }),
+                          )
+                        }
+                      />
+                    ) : cloneRemote ? (
+                      <Action
+                        label="Clone & open"
+                        disabled={busy}
+                        onPress={() =>
+                          navigation.dispatch(
+                            StackActions.push("AddProjectDestination", {
+                              environmentId: prepared.environmentId,
+                              remoteUrl: cloneRemote,
+                              repositoryTitle: cloneDirectory,
+                              repositoryName: cloneDirectory,
+                            }),
+                          )
+                        }
+                      />
+                    ) : (
+                      <Text className="text-foreground-muted">
+                        A team admin needs to set a Git clone URL.
+                      </Text>
+                    )}
                     {self?.role === "admin" && (
                       <Action
                         label="Edit repository"

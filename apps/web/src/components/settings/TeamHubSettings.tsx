@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   canManageTeamHubTasks,
+  findTeamHubProject,
   formatTeamHubContract,
   queuedTeamHubTasksForOthers,
   parseTeamHubDomains,
@@ -9,15 +10,15 @@ import {
   incomingTeamHubTasks,
   delegatedTeamHubTasks,
   teamHubTaskTurn,
+  teamHubCloneRemote,
   teamHubActionErrorMessage,
   withTeamHubOrigin,
   type TeamHubAction,
 } from "@t3tools/client-runtime/state/team-hub";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { TeamHubInvite, TeamHubStartInput } from "@t3tools/contracts/teamHub";
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -26,10 +27,13 @@ import { TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
+import { openCommandPalette } from "~/commandPaletteBus";
+import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useProjects } from "~/state/entities";
-import { usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
+import { useEnvironmentProjectClones } from "~/state/projectClones";
 import { usePreparedConnection } from "~/state/session";
 import { teamHubActionCommand, teamHubStateAtom } from "~/state/teamHub";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -243,6 +247,9 @@ function ConnectedTeamHub({
   const [areasDraft, setAreasDraft] = useState("");
   const [areasSelection, setAreasSelection] = useState<ReadonlySet<string>>(new Set());
   const projects = useProjects();
+  const environment = useEnvironment(prepared.environmentId);
+  const clones = useEnvironmentProjectClones(prepared.environmentId);
+  const openProject = useNewThreadHandler();
   const [invite, setInvite] = useState<TeamHubInvite | null>(null);
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -290,16 +297,13 @@ function ConnectedTeamHub({
   const self = snapshot?.members.find((member) => member.id === snapshot.selfId);
   const pendingTasks = incomingTeamHubTasks(snapshot, { includeWaiting: true });
   const queuedTasks = queuedTeamHubTasksForOthers(snapshot);
-  // A local checkout of the team's repository, used to pick areas from its files.
-  const repositoryKey = snapshot ? normalizeGitRemoteUrl(snapshot.team.repo) : null;
-  const teamProject = projects.find(
-    (project) =>
-      project.environmentId === prepared.environmentId &&
-      project.repositoryIdentity?.canonicalKey === repositoryKey,
-  );
-  const teamRoot = teamProject
-    ? (teamProject.repositoryIdentity?.rootPath ?? teamProject.workspaceRoot)
+  const teamProject = snapshot
+    ? findTeamHubProject(snapshot.team.repo, prepared.environmentId, projects, clones)
+    : undefined;
+  const teamRoot = teamProject?.repositoryIdentity
+    ? (teamProject.repositoryIdentity.rootPath ?? teamProject.workspaceRoot)
     : null;
+  const cloneRemote = snapshot ? teamHubCloneRemote(snapshot.team.repo) : null;
   const memberName = (memberId: string) =>
     snapshot?.members.find((member) => member.id === memberId)?.name ?? "Teammate";
 
@@ -594,7 +598,37 @@ function ConnectedTeamHub({
                 </div>
               </form>
             ) : (
-              <p className="py-2 font-mono text-xs break-all">{snapshot.team.repo}</p>
+              <div className="space-y-2 py-2">
+                <p className="font-mono text-xs break-all">{snapshot.team.repo}</p>
+                <p className="text-xs text-muted-foreground">
+                  {prepared.label}
+                  {teamProject ? ` · ${teamProject.workspaceRoot}` : ""}
+                </p>
+                {teamProject || cloneRemote ? (
+                  <Button
+                    size="sm"
+                    disabled={environment?.connection.phase !== "connected"}
+                    onClick={() => {
+                      if (teamProject) {
+                        setError(null);
+                        void openProject(
+                          scopeProjectRef(prepared.environmentId, teamProject.id),
+                        ).catch(() => setError("Could not open the team project. Try again."));
+                      } else if (cloneRemote) {
+                        openCommandPalette({
+                          clone: { environmentId: prepared.environmentId, remoteUrl: cloneRemote },
+                        });
+                      }
+                    }}
+                  >
+                    {teamProject ? "Open project" : "Clone & open"}
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    A team admin needs to set a Git clone URL.
+                  </p>
+                )}
+              </div>
             )}
           </SettingsRow>
           <SettingsRow title="Members">
