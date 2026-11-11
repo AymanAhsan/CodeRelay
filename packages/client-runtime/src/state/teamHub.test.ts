@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { EnvironmentId, ProjectId, type ProjectCloneSnapshot } from "@t3tools/contracts";
 import type { TeamHubMember, TeamHubSnapshot, TeamHubTask } from "@t3tools/contracts/teamHub";
+import type { EnvironmentProject } from "./models.ts";
 import {
   canManageTeamHubTasks,
+  findTeamHubProject,
   promptRequestsTeamHandoff,
   queuedTeamHubTasksForOthers,
   rankTeamHubHandoffCandidates,
@@ -12,8 +15,81 @@ import {
   delegatedTeamHubTasks,
   parseTeamHubDomains,
   parseTeamHubLink,
+  teamHubCloneRemote,
   withTeamHubOrigin,
 } from "./teamHub.ts";
+
+describe("team repository projects", () => {
+  const environmentId = EnvironmentId.make("connected-machine");
+  const remoteUrl = "https://github.com/acme/backend.git";
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const project: EnvironmentProject = {
+    environmentId,
+    id: ProjectId.make("backend"),
+    title: "Backend",
+    workspaceRoot: "/projects/backend",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    repositoryIdentity: {
+      canonicalKey: "github.com/acme/backend",
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    },
+    defaultModelSelection: null,
+    scripts: [],
+  };
+
+  it("matches the repository across Git transports only on the selected machine", () => {
+    const sshRemote = "git@github.com:acme/backend.git";
+    const otherProject = { ...project, environmentId: EnvironmentId.make("other-machine") };
+    expect(findTeamHubProject(sshRemote, environmentId, [otherProject], [])).toBeUndefined();
+    expect(findTeamHubProject(sshRemote, environmentId, [otherProject, project], [])).toBe(project);
+  });
+
+  it("reopens a failed clone so the teammate can retry it", () => {
+    const cloningProject = { ...project, repositoryIdentity: null };
+    const clone: ProjectCloneSnapshot = {
+      projectId: project.id,
+      remoteUrl,
+      destinationPath: project.workspaceRoot,
+      repository: null,
+      phase: "failed",
+      stage: "connecting",
+      percent: null,
+      detail: null,
+      error: "Permission denied",
+      startedAt: timestamp,
+      endedAt: timestamp,
+      sequence: 2,
+    };
+    expect(findTeamHubProject(remoteUrl, environmentId, [cloningProject], [clone])).toBe(
+      cloningProject,
+    );
+    const unrelatedProject = {
+      ...cloningProject,
+      repositoryIdentity: {
+        canonicalKey: "github.com/acme/frontend",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/frontend.git",
+        },
+      },
+    };
+    expect(
+      findTeamHubProject(remoteUrl, environmentId, [unrelatedProject], [clone]),
+    ).toBeUndefined();
+  });
+
+  it("only offers to clone network Git remotes supplied by the team", () => {
+    expect(teamHubCloneRemote(remoteUrl)).toBe(remoteUrl);
+    expect(teamHubCloneRemote("git@github.com:acme/backend.git")).toBe(
+      "git@github.com:acme/backend.git",
+    );
+    expect(teamHubCloneRemote("file:///projects/backend")).toBeNull();
+    expect(teamHubCloneRemote("/projects/backend")).toBeNull();
+    expect(teamHubCloneRemote("https://github.com")).toBeNull();
+  });
+});
 
 describe("incomingTeamHubTasks", () => {
   const task = (id: string, overrides: Partial<TeamHubTask> = {}): TeamHubTask => ({

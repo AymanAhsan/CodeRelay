@@ -11,8 +11,14 @@ const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
+  readonly clone?: CommandPaletteCloneRequest;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
+}
+
+export interface CommandPaletteCloneRequest {
+  readonly environmentId: EnvironmentId;
+  readonly remoteUrl: string;
 }
 
 export function openCommandPalette(detail?: CommandPaletteOpenDetail): void {

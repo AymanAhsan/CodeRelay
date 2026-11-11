@@ -1,5 +1,5 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
-import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
+import type { CommandPaletteCloneRequest, CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
   type EnvironmentId,
   type FilesystemBrowseEntry,
@@ -62,6 +62,7 @@ export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
   | { readonly kind: "add-project" | "new-thread-in" | "change-theme" }
+  | ({ readonly kind: "clone-project" } & CommandPaletteCloneRequest)
   | {
       readonly kind: "search";
       readonly query: string;
@@ -83,6 +84,7 @@ export type CommandPaletteUiAction =
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
   | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "OpenCloneProject"; readonly request: CommandPaletteCloneRequest }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
   | { readonly _tag: "ClearOpenIntent" };
@@ -112,6 +114,12 @@ export function reduceCommandPaletteUiState(
       };
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
+    case "OpenCloneProject":
+      return {
+        open: true,
+        mode: "command",
+        openIntent: { kind: "clone-project", ...action.request },
+      };
     case "OpenNewThreadIn":
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
     case "OpenChangeTheme":
