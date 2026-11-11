@@ -74,6 +74,16 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "deleteTeam",
+        Effect.fn("teamHub.deleteTeam")(function* ({ payload }) {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          yield* hub
+            .deleteTeam(payload.teamId)
+            .pipe(Effect.catch((cause) => failEnvironmentInternal("internal_error", cause)));
+          return yield* state;
+        }),
+      )
+      .handle(
         "publish",
         Effect.fn("teamHub.publish")(function* ({ payload }) {
           yield* requireEnvironmentScope(

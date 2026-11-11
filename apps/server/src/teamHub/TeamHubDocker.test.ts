@@ -13,7 +13,11 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { teamHubDockerTag, type TeamHubStartFailureReason } from "@t3tools/contracts/teamHub";
+import {
+  TEAM_HUB_DOCKER_IMAGE,
+  teamHubDockerTag,
+  type TeamHubStartFailureReason,
+} from "@t3tools/contracts/teamHub";
 
 import * as TeamHubDocker from "./TeamHubDocker.ts";
 import { HubStore } from "../../../hub/src/store.ts";
@@ -65,6 +69,60 @@ const dockerWith = (handler: (args: ReadonlyArray<string>) => Reply, tag?: strin
   );
   return { calls, layer };
 };
+
+describe("TeamHubDocker container removal", () => {
+  it.effect("removes only the verified Docker container after its last team is deleted", () =>
+    Effect.gen(function* () {
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hub-delete-"));
+      const store = new HubStore(dir);
+      const id = "a".repeat(64);
+      try {
+        const owner = store.bootstrap(store.setupToken!, "Engineering", "repo", "Alice");
+        const admin = store.authenticate(owner.credential);
+        const teammate = store.join(store.createInvite(admin, owner.team.id).token, "Bob");
+        const { calls, layer } = dockerWith((args) => {
+          if (args[0] === "ps") return { stdout: `${id} ${TEAM_HUB_DOCKER_IMAGE}:edge\n` };
+          if (args[0] === "rm") return {};
+          assert.strictEqual(args[0], "exec");
+          assert.strictEqual(args[1], id);
+          const result = NodeChildProcess.spawnSync(process.execPath, args.slice(3), {
+            env: { ...process.env, HUB_DATA_DIR: dir },
+            encoding: "utf8",
+          });
+          assert.strictEqual(result.status, 0, result.stderr);
+          return { stdout: result.stdout };
+        });
+        yield* Effect.gen(function* () {
+          const docker = yield* TeamHubDocker.TeamHubDocker;
+          assert.strictEqual(
+            yield* docker.findTeamContainer(owner.team.id, teammate.credential),
+            null,
+          );
+          assert.strictEqual(yield* docker.findTeamContainer(owner.team.id, owner.credential), id);
+          yield* docker.removeEmptyContainer(id).pipe(Effect.flip);
+          assert.deepStrictEqual(
+            calls.filter(([command]) => command === "rm"),
+            [],
+          );
+          const other = store.createTeam(admin, "Other team", "other");
+          yield* docker.deleteLastTeam(id, owner.team.id, owner.credential).pipe(Effect.flip);
+          store.deleteTeam(store.authenticate(other.credential), other.team.id);
+          yield* docker.deleteLastTeam(id, owner.team.id, teammate.credential).pipe(Effect.flip);
+          yield* docker.deleteLastTeam(id, owner.team.id, owner.credential);
+          assert.throws(() => store.authenticate(owner.credential));
+          yield* docker.removeEmptyContainer(id);
+          assert.deepStrictEqual(
+            calls.filter(([command]) => command === "rm"),
+            [["rm", "-f", id]],
+          );
+        }).pipe(Effect.provide(layer));
+      } finally {
+        store.close();
+        NodeFS.rmSync(dir, { recursive: true, force: true });
+      }
+    }),
+  );
+});
 
 const start = (layer: Layer.Layer<TeamHubDocker.TeamHubDocker>) =>
   Effect.gen(function* () {

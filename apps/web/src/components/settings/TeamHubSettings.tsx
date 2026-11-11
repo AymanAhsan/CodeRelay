@@ -23,6 +23,7 @@ import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { TriangleAlertIcon } from "lucide-react";
+import { ensureLocalApi } from "../../localApi";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { connectionAtomRuntime } from "~/connection/runtime";
@@ -522,14 +523,31 @@ function ConnectedTeamHub({
           </div>
         }
         control={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => void act({ type: "leave" })}
-          >
-            Leave team
-          </Button>
+          snapshot && self?.role === "admin" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={busy}
+              onClick={async () => {
+                const confirmed = await ensureLocalApi().dialogs.confirm(
+                  `Permanently delete "${snapshot.team.name}" for everyone?`,
+                  { variant: "destructive" },
+                );
+                if (confirmed) await act({ type: "deleteTeam", teamId: snapshot.team.id });
+              }}
+            >
+              Delete team
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void act({ type: "leave" })}
+            >
+              Leave team
+            </Button>
+          )
         }
       />
       {snapshot && (

@@ -22,7 +22,7 @@ import * as Option from "effect/Option";
 import { CommonActions, useNavigation } from "@react-navigation/native";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, TextInput, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -51,10 +51,12 @@ function Action({
   label,
   disabled,
   onPress,
+  destructive = false,
 }: {
   label: string;
   disabled: boolean;
   onPress: () => void;
+  destructive?: boolean;
 }) {
   return (
     <Pressable
@@ -64,7 +66,11 @@ function Action({
       onPress={onPress}
       className="rounded-xl bg-accent px-4 py-2 disabled:opacity-50"
     >
-      <Text className="text-center text-primary-text">{label}</Text>
+      <Text
+        className={destructive ? "text-center text-destructive" : "text-center text-primary-text"}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -657,7 +663,33 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
               </View>
             </>
           )}
-          <Action label="Leave team" disabled={busy} onPress={() => void act({ type: "leave" })} />
+          {snapshot && self?.role === "admin" ? (
+            <Action
+              label="Delete team"
+              destructive
+              disabled={busy}
+              onPress={() =>
+                Alert.alert(
+                  "Delete team",
+                  `Permanently delete "${snapshot.team.name}" for everyone?`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Delete team",
+                      style: "destructive",
+                      onPress: () => void act({ type: "deleteTeam", teamId: snapshot.team.id }),
+                    },
+                  ],
+                )
+              }
+            />
+          ) : (
+            <Action
+              label="Leave team"
+              disabled={busy}
+              onPress={() => void act({ type: "leave" })}
+            />
+          )}
         </View>
       )}
       {error && (

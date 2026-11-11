@@ -650,6 +650,14 @@ class EnvironmentTeamHubHttpApi extends HttpApiGroup.make("teamHub")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("deleteTeam", "/api/team-hub/delete-team", {
+      headers: OptionalBearerHeaders,
+      payload: Schema.Struct({ teamId: Schema.NonEmptyString }),
+      success: TeamHubState,
+      error: EnvironmentTeamHubErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("publish", "/api/team-hub/publish", {
       headers: OptionalBearerHeaders,
       payload: TeamHubClientMessage,

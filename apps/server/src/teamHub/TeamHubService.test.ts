@@ -26,6 +26,9 @@ describe("local team hub connector", () => {
         const dockerLayer = Layer.succeed(
           TeamHubDocker.TeamHubDocker,
           TeamHubDocker.TeamHubDocker.of({
+            findTeamContainer: () => Effect.succeed("container"),
+            deleteLastTeam: () => Effect.die("the hub supports team deletion"),
+            removeEmptyContainer: () => Effect.die("must preserve a shared container"),
             start: () => Effect.die("unused"),
             restart: () => Effect.die("unused"),
             setupLink: () => Effect.die("unused"),
@@ -209,6 +212,12 @@ describe("local team hub connector", () => {
           expect(second.snapshot?.selfId).not.toBe(member.id);
           expect(store.snapshot(member, new Set()).team.name).toBe("Engineering");
           expect(store.snapshot(member, new Set()).notes[0]?.text).toBe("Ready to pair");
+          const secondCredential = new TextDecoder().decode(secrets.get("team-hub-membership"));
+          yield* hub.deleteTeam(second.snapshot!.team.id);
+          expect((yield* hub.state).url).toBeNull();
+          expect(secrets.has("team-hub-membership")).toBe(false);
+          expect(() => store.authenticate(secondCredential)).toThrow("Invalid credential");
+          expect(store.snapshot(member, new Set()).team.name).toBe("Engineering");
         }).pipe(
           Effect.provide(
             layer.pipe(

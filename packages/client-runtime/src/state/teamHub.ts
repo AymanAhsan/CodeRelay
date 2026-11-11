@@ -227,6 +227,7 @@ export type TeamHubAction =
   | { readonly type: "setupLink"; readonly input: TeamHubStartInput }
   | { readonly type: "createLocalTeam"; readonly input: TeamHubCreateLocalTeamInput }
   | { readonly type: "leave" }
+  | { readonly type: "deleteTeam"; readonly teamId: string }
   | { readonly type: "publish"; readonly input: TeamHubClientMessage }
   | { readonly type: "invite" }
   | { readonly type: "revokeInvite"; readonly inviteId: string }
@@ -429,6 +430,14 @@ export const runTeamHubAction = Effect.fn("clientRuntime.teamHub.action")(functi
         timeoutMs: 15_000,
         url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.checkHub(),
         request: ({ client, headers }) => client.checkHub({ headers, payload: action.input }),
+      });
+    case "deleteTeam":
+      return yield* executeAuthenticatedEnvironmentHttpRequest({
+        ...common,
+        timeoutMs: 45_000,
+        url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.deleteTeam(),
+        request: ({ client, headers }) =>
+          client.deleteTeam({ headers, payload: { teamId: action.teamId } }),
       });
     case "leave":
       return yield* executeAuthenticatedEnvironmentHttpRequest({

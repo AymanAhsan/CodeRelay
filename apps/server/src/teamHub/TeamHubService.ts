@@ -34,11 +34,14 @@ const decodeSnapshot = Schema.decodeUnknownSync(TeamHubSnapshotSchema);
 export class TeamHubError extends Schema.TaggedError<TeamHubError>()("TeamHubError", {
   reason: Schema.String,
   cause: Schema.Defect(),
+  status: Schema.optional(Schema.Number),
 }) {
   override get message(): string {
     return this.reason;
   }
 }
+
+const isTeamHubError = Schema.is(TeamHubError);
 
 export class TeamHubService extends Context.Service<
   TeamHubService,
@@ -57,6 +60,7 @@ export class TeamHubService extends Context.Service<
       input: TeamHubCreateLocalTeamInput,
     ) => Effect.Effect<void, TeamHubError>;
     readonly leave: Effect.Effect<void, TeamHubError>;
+    readonly deleteTeam: (teamId: string) => Effect.Effect<void, TeamHubError>;
     readonly publish: (message: TeamHubClientMessage) => Effect.Effect<void, TeamHubError>;
     readonly publishCheckpoint: (input: {
       readonly threadId: ThreadId;
@@ -238,22 +242,27 @@ const make = Effect.gen(function* () {
         });
         const result: unknown = await response.json();
         if (!response.ok) {
-          throw new Error(
-            typeof result === "object" &&
+          throw new TeamHubError({
+            reason:
+              typeof result === "object" &&
               result !== null &&
               "error" in result &&
               typeof result.error === "string"
-              ? result.error
-              : `Hub returned ${response.status}`,
-          );
+                ? result.error
+                : `Hub returned ${response.status}`,
+            cause: null,
+            status: response.status,
+          });
         }
         return result as A;
       },
       catch: (cause) =>
-        new TeamHubError({
-          reason: cause instanceof Error ? cause.message : "Team hub request failed",
-          cause,
-        }),
+        isTeamHubError(cause)
+          ? cause
+          : new TeamHubError({
+              reason: cause instanceof Error ? cause.message : "Team hub request failed",
+              cause,
+            }),
     });
 
   const start = Effect.gen(function* () {
@@ -379,6 +388,36 @@ const make = Effect.gen(function* () {
       yield* saveMembership(url, membership);
     }),
     leave,
+    deleteTeam: Effect.fn("TeamHubService.deleteTeam")(function* (teamId) {
+      const currentCredential = credential;
+      const currentUrl = state.url;
+      if (!currentCredential || !currentUrl) {
+        return yield* new TeamHubError({ reason: "Not joined to a team hub", cause: null });
+      }
+      const container = yield* docker.findTeamContainer(teamId, currentCredential);
+      if (credential !== currentCredential || state.url !== currentUrl) {
+        return yield* new TeamHubError({ reason: "Team membership changed", cause: null });
+      }
+      const result = yield* request<{ empty: boolean }>("/api/team/delete", { teamId }).pipe(
+        Effect.catchIf(
+          (error) => error.status === 404,
+          (error) =>
+            container
+              ? docker.deleteLastTeam(container, teamId, currentCredential).pipe(
+                  Effect.mapError((cause) => new TeamHubError({ reason: cause.reason, cause })),
+                  Effect.as({ empty: true }),
+                )
+              : Effect.fail(error),
+        ),
+      );
+      const cleanup = yield* Effect.result(
+        result.empty === true && container ? docker.removeEmptyContainer(container) : Effect.void,
+      );
+      if (credential === currentCredential && state.url === currentUrl) yield* leave;
+      if (cleanup._tag === "Failure") {
+        return yield* new TeamHubError({ reason: cleanup.failure.reason, cause: cleanup.failure });
+      }
+    }),
     publish: (message) => request("/api/publish", message),
     publishCheckpoint: (input) =>
       Effect.sync(() => {
