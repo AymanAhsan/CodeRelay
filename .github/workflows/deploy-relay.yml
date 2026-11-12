@@ -1,4 +1,4 @@
-name: Deploy T3 Connect relay
+name: Deploy CodeRelay Connect relay
 
 # Manual only: deploying needs Cloudflare, PlanetScale, Clerk, and push
 # credentials this repository does not have.

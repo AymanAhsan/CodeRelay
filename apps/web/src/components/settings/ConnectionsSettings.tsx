@@ -1520,7 +1520,7 @@ function SavedBackendListRow({
     serverUpdateState.status === "running" && serverUpdateState.stage === "resuming";
   const status = savedBackendStatus(environment);
   const serverVersion = environment.serverConfig?.environment.serverVersion ?? null;
-  // A saved T3 Connect machine this device has never reached (unsupported,
+  // A saved CodeRelay Connect machine this device has never reached (unsupported,
   // or not yet connected) still has a descriptor from relay discovery, so
   // it can wear its detected glyph instead of the generic server. Discovery
   // empties its map on every refresh, so hold the last descriptor seen or
@@ -1677,7 +1677,7 @@ function CloudLinkSwitch({
   disabled,
   disabledReason,
   onCheckedChange,
-  ariaLabel = "Enable T3 Connect",
+  ariaLabel = "Enable CodeRelay Connect",
 }: {
   readonly checked: boolean;
   readonly disabled: boolean;
@@ -1716,9 +1716,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const disabledReason = !isSignedIn
-    ? "Sign in to T3 Connect to manage this environment."
+    ? "Sign in to CodeRelay Connect to manage this environment."
     : !canManageRelay
-      ? "Your session does not have permission to manage T3 Connect access."
+      ? "Your session does not have permission to manage CodeRelay Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
 
@@ -1731,15 +1731,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       toastManager.add({
         type: "success",
         title: enabled
-          ? "T3 Connect linked"
+          ? "CodeRelay Connect linked"
           : publishAgentActivity
-            ? "T3 Connect tunnel disabled"
-            : "T3 Connect unlinked",
+            ? "CodeRelay Connect tunnel disabled"
+            : "CodeRelay Connect unlinked",
         description: enabled
-          ? "This environment is available through T3 Connect."
+          ? "This environment is available through CodeRelay Connect."
           : publishAgentActivity
             ? "The managed tunnel was removed. Agent activity publishing stays on."
-            : "This environment is no longer available through T3 Connect.",
+            : "This environment is no longer available through CodeRelay Connect.",
       });
     }
     setIsUpdating(false);
@@ -1767,8 +1767,8 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           title={searchableSetting("t3-connect").title}
           description={
             managedTunnelActive
-              ? "This environment is available to your other devices through T3 Connect."
-              : "Make this environment available to your other devices through T3 Connect."
+              ? "This environment is available to your other devices through CodeRelay Connect."
+              : "Make this environment available to your other devices through CodeRelay Connect."
           }
           status={operationError ?? primaryCloudLinkState.error}
           control={
@@ -1783,7 +1783,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ) : null}
       <SettingsRow
         title={searchableSetting("publish-agent-activity").title}
-        description="Send activity to mobile notifications and Live Activities without T3 Connect."
+        description="Send activity to mobile notifications and Live Activities without CodeRelay Connect."
         control={
           <CloudLinkSwitch
             ariaLabel="Publish agent activity to mobile clients"
@@ -1812,7 +1812,7 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <EmptyTitle>No saved remote environments</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
+            ? "Click “Add environment” to pair another environment, or connect one from CodeRelay Connect."
             : "Click “Add environment” to pair another environment."}
         </EmptyDescription>
       </EmptyHeader>
@@ -2556,7 +2556,7 @@ export function ConnectionsSettings() {
 
   // Removing forgets the pairing, credentials, and cached threads on this
   // device. Switching off is the reversible path, so removal always confirms.
-  // T3 Connect environments get their own dialog: removing one here leaves its
+  // CodeRelay Connect environments get their own dialog: removing one here leaves its
   // account registration, so it points to where that can be deregistered.
   const [pendingT3ConnectRemoval, setPendingT3ConnectRemoval] =
     useState<EnvironmentPresentation | null>(null);
@@ -3451,7 +3451,7 @@ export function ConnectionsSettings() {
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
                     ? "Let your other devices connect to CodeRelay over the network. Pair devices to give them access. CodeRelay will restart."
-                    : "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. CodeRelay will restart."}
+                    : "Devices connected over your local network will disconnect. Existing tunnels, such as CodeRelay Connect or Tailscale HTTPS, keep working. CodeRelay will restart."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

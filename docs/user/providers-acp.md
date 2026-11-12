@@ -26,7 +26,7 @@ code; review an agent's source and license before adding it.
 ## Where agents run
 
 Registry agents always run on the machine that hosts your CodeRelay server. That stays true when you
-connect through `app.t3.codes`, T3 Connect, or a relay.
+connect through `app.t3.codes`, CodeRelay Connect, or a relay.
 
 Agents install under `tools/<agent-id>/<version>/` inside T3 home. CodeRelay verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
