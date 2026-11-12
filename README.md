@@ -2,7 +2,7 @@
 
 **Hand off work between your teammates' coding agents, with contracts pinned to Git commits.**
 
-[Download for Windows](https://github.com/AymanAhsan/CodeRelay/releases/download/main-latest/CodeRelay-windows-x64.exe) · [Quick start](#quick-start) · [Team hub guide](docs/user/team-hub.md)
+[Website](https://site-olive-two-79.vercel.app/) · [Download for Windows](https://github.com/AymanAhsan/CodeRelay/releases/download/main-latest/CodeRelay-windows-x64.exe) · [Quick start](#quick-start) · [Team hub guide](docs/user/team-hub.md)
 
 ![Bob's agent sends Alice a backend task with an API contract, Alice accepts it, and her agent returns the finished branch and commit](docs/assets/team-handoff.gif)
 
@@ -16,9 +16,29 @@ CodeRelay gives teammates a way to hand work between their agents. Each teammate
 
 ## Quick start
 
-Requires **Node.js 24**, **Git**, and **Vite+ (`vp`)**. Install and authenticate a supported agent provider, such as Codex or Claude Code, before starting agent work.
+Install and authenticate a supported agent provider, such as Codex or Claude Code, before starting agent work.
 
-### Install vp
+### Install in one line
+
+On Windows, in PowerShell, this downloads and runs the desktop installer:
+
+```powershell
+irm https://site-olive-two-79.vercel.app/install.ps1 | iex
+```
+
+On macOS or Linux, with **Node.js 24** and **Git** installed, this downloads CodeRelay into `~/CodeRelay`, installs Vite+ (`vp`) if needed, and installs dependencies:
+
+```sh
+curl -fsSL https://site-olive-two-79.vercel.app/install.sh | bash
+```
+
+Then start the demo with `cd ~/CodeRelay && vp run dev:team`. Set `CODERELAY_DIR` to install somewhere else.
+
+### Install manually
+
+Requires **Node.js 24**, **Git**, and **Vite+ (`vp`)**.
+
+#### Install vp
 
 On macOS or Linux:
 

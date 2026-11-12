@@ -529,6 +529,7 @@ a {
   font-family: var(--font-mono);
   font-size: 0.875em;
   color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 .status {
