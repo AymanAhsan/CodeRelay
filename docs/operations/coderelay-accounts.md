@@ -33,7 +33,7 @@ clients. Mobile does not require sign-in; it exposes the introduction through
 Settings → CodeRelay account. Without a key, local mode loads no Clerk provider.
 Setting the flag to `0` removes the sign-in requirement and early-access onboarding.
 
-The published Windows installer (`desktop-windows-latest.yml`) reads the key from
+The published desktop installers (`desktop-latest.yml`) read the key from
 the `CLERK_PUBLISHABLE_KEY` repository variable and fails if it is missing, since
 the key is baked into the bundle at build time.
 

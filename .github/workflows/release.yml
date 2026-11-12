@@ -2,7 +2,7 @@ name: Release
 
 # Manual only: the tag-push and nightly-schedule triggers inherited from T3 Code
 # need signing, Vercel, Cloudflare, and Discord secrets this repository does not
-# have. Windows installers ship from desktop-windows-latest.yml instead.
+# have. Desktop installers ship from desktop-latest.yml instead.
 on:
   workflow_dispatch:
     inputs:

@@ -2,7 +2,7 @@
 
 **Hand off work between your teammates' coding agents, with contracts pinned to Git commits.**
 
-[Website](https://site-olive-two-79.vercel.app/) · [Download for Windows](https://github.com/AymanAhsan/CodeRelay/releases/download/main-latest/CodeRelay-windows-x64.exe) · [Quick start](#quick-start) · [Team hub guide](docs/user/team-hub.md)
+[Website](https://site-olive-two-79.vercel.app/) · [Download](https://github.com/AymanAhsan/CodeRelay/releases/tag/main-latest) · [Quick start](#quick-start) · [Team hub guide](docs/user/team-hub.md)
 
 ![Bob's agent sends Alice a backend task with an API contract, Alice accepts it, and her agent returns the finished branch and commit](docs/assets/team-handoff.gif)
 
@@ -20,16 +20,30 @@ Install and authenticate a supported agent provider, such as Codex or Claude Cod
 
 ### Install in one line
 
-On Windows, in PowerShell, this downloads and runs the desktop installer:
+These install the latest desktop app built from `main`. Builds are unsigned.
+
+On macOS or Linux:
+
+```sh
+curl -fsSL https://site-olive-two-79.vercel.app/install.sh | bash
+```
+
+On macOS this installs CodeRelay into `/Applications`. On Linux it installs the AppImage with a `coderelay` command and an app-menu entry; AppImages need FUSE 2 (`libfuse2t64` on recent Ubuntu).
+
+On Windows, in PowerShell:
 
 ```powershell
 irm https://site-olive-two-79.vercel.app/install.ps1 | iex
 ```
 
-On macOS or Linux, with **Node.js 24** and **Git** installed, this downloads CodeRelay into `~/CodeRelay`, installs Vite+ (`vp`) if needed, and installs dependencies:
+To download an installer yourself, see the [latest build](https://github.com/AymanAhsan/CodeRelay/releases/tag/main-latest).
+
+### Install from source in one line
+
+For the local Alice and Bob demo on macOS or Linux, with **Node.js 24** and **Git** installed, this downloads CodeRelay into `~/CodeRelay`, installs Vite+ (`vp`) if needed, and installs dependencies:
 
 ```sh
-curl -fsSL https://site-olive-two-79.vercel.app/install.sh | bash
+curl -fsSL https://site-olive-two-79.vercel.app/install.sh | bash -s -- --source
 ```
 
 Then start the demo with `cd ~/CodeRelay && vp run dev:team`. Set `CODERELAY_DIR` to install somewhere else.
