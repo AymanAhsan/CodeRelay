@@ -6,7 +6,7 @@ product
 
 ## Users
 
-Small dev teams (roughly 2 to 10 people) working in one shared repository, each person driving coding agents in T3 Code. Each teammate owns parts of the repo. They spend the day inside agent threads and want follow-up work found by one agent to reach the right owner without a meeting, a ticket, or a copy-pasted message.
+Small dev teams (roughly 2 to 10 people) working in one shared repository, each person driving coding agents in CodeRelay. Each teammate owns parts of the repo. They spend the day inside agent threads and want follow-up work found by one agent to reach the right owner without a meeting, a ticket, or a copy-pasted message.
 
 ## Product Purpose
 
@@ -16,7 +16,7 @@ The Team hub is the fork's headline feature. It should be easy to find on first 
 
 ## Brand Personality
 
-Quiet, precise, collaborative. The hub reads as a native part of T3 Code, not a bolted-on social layer. Copy is plain and specific: names, counts, repo paths. Presence and incoming work are stated, not celebrated.
+Quiet, precise, collaborative. The hub reads as a native part of CodeRelay, not a bolted-on social layer. Copy is plain and specific: names, counts, repo paths. Presence and incoming work are stated, not celebrated.
 
 ## Anti-references
 
