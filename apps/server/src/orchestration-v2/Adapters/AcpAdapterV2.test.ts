@@ -902,7 +902,7 @@ describe("AcpAdapterV2", () => {
       assert.include(
         restoredBuild.methods,
         "session/set_config_option",
-        "Build should restore the native mode that T3 temporarily replaced for Plan",
+        "Build should restore the native mode that CodeRelay temporarily replaced for Plan",
       );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );

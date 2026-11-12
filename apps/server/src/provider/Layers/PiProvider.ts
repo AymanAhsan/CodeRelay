@@ -6,7 +6,7 @@
  * are discovered through a short-lived ephemeral RPC session
  * (`pi --mode rpc --no-session`), so everything the user configured in
  * `~/.pi/agent` — custom providers, models.json entries, extensions, skills —
- * shows up in T3 without any hardcoded catalog.
+ * shows up in CodeRelay without any hardcoded catalog.
  */
 import {
   type CustomModelSetting,
@@ -71,7 +71,7 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
- * Version 0.80.5 was the first published package containing both hooks. T3
+ * Version 0.80.5 was the first published package containing both hooks. CodeRelay
  * needs them for rollback boundaries and reliable turn terminalization.
  */
 export const MINIMUM_PI_VERSION = "0.80.5";

@@ -1,5 +1,5 @@
 /**
- * Source for the T3-owned Pi extension that consumes T3's HTTP MCP server.
+ * Source for the CodeRelay-owned Pi extension that consumes CodeRelay's HTTP MCP server.
  *
  * Pi core has no MCP client. This file is TypeScript that Pi itself loads via
  * `--extension`. It is written to a cache path at session open so packaged
@@ -228,7 +228,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (changed) return replacement;
   });
 
-  // Pi deliberately leaves permission policy to extensions. T3's injected
+  // Pi deliberately leaves permission policy to extensions. CodeRelay's injected
   // bridge uses Pi's public blocking tool hook so the shared runtime modes
   // keep their normal meaning without replacing or shadowing Pi's runtime.
   pi.on("tool_call", async (event, ctx) => {
@@ -277,7 +277,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           description,
           promptSnippet: description.split("\\n")[0] ?? name,
           promptGuidelines: [
-            \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
+            \`Use \${registeredName} from the t3-code MCP server when the user asks for CodeRelay orchestration that this tool covers.\`,
           ],
           parameters: jsonSchemaToTypebox(tool.inputSchema),
           async execute(_toolCallId, params, signal) {
