@@ -1,7 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import handoffVideo from "../../../../docs/assets/team-handoff.webm?url";
-import { REPOSITORY_URL, UPSTREAM_REPOSITORY_URL, WINDOWS_INSTALLER_URL, SOURCE_ZIP_URL, QUICK_START_URL, TEAM_GUIDE_URL, HOSTING_GUIDE_URL } from "../lib/site";
+import { REPOSITORY_URL, UPSTREAM_REPOSITORY_URL, WINDOWS_INSTALLER_URL, MAC_ARM64_INSTALLER_URL, MAC_X64_INSTALLER_URL, LINUX_X64_INSTALLER_URL, LINUX_ARM64_INSTALLER_URL, SITE_URL, SOURCE_ZIP_URL, QUICK_START_URL, TEAM_GUIDE_URL, HOSTING_GUIDE_URL } from "../lib/site";
 
 const handoff = [
   { time: "09:41", who: "alice", verb: "owns", detail: "apps/web/**" },
@@ -46,7 +46,9 @@ const handoff = [
           <a class="button button--primary" href={WINDOWS_INSTALLER_URL}>Download for Windows</a>
           <a class="button button--secondary" href="#get-started">Try the local demo</a>
         </div>
-        <p class="fine">Windows 10 or later, 64-bit. The installer is unsigned, so Windows may ask you to confirm before it runs. Open source under the MIT license. Bring your existing agent provider and subscription.</p>
+        <p class="fine">Also for macOS (<a href={MAC_ARM64_INSTALLER_URL}>Apple silicon</a>, <a href={MAC_X64_INSTALLER_URL}>Intel</a>) and Linux (<a href={LINUX_X64_INSTALLER_URL}>x64</a>, <a href={LINUX_ARM64_INSTALLER_URL}>arm64</a> AppImage). Or install from a terminal:</p>
+        <p class="fine">macOS and Linux: <code>curl -fsSL {SITE_URL}/install.sh | bash</code><br />Windows PowerShell: <code>irm {SITE_URL}/install.ps1 | iex</code></p>
+        <p class="fine">Builds are unsigned, so Windows may ask you to confirm before the installer runs. macOS blocks unsigned apps downloaded in a browser, so the terminal installer is the easiest way to install there. Open source under the MIT license. Bring your existing agent provider and subscription.</p>
       </div>
       <figure>
         <div class="feed" role="group" aria-label="Illustrated example of an Alice-to-Bob task handoff">
@@ -152,10 +154,9 @@ const handoff = [
         <div class="split">
           <div>
             <h3>Start the local demo</h3>
-            <p class="setup-copy">Install Node.js 24, Git, and Vite+ (<code>vp</code>). Install and authenticate a supported agent provider before starting agent work. <a href={QUICK_START_URL}>Read the installation steps</a>.</p>
-            <pre class="install-code"><code>git clone https://github.com/AymanAhsan/CodeRelay.git
-cd CodeRelay
-vp i
+            <p class="setup-copy">On macOS or Linux, with Node.js 24 and Git installed, one command downloads the source and installs Vite+ (<code>vp</code>) if you need it. Install and authenticate a supported agent provider before starting agent work. <a href={QUICK_START_URL}>Read the installation steps</a>.</p>
+            <pre class="install-code"><code>curl -fsSL {SITE_URL}/install.sh | bash -s -- --source
+cd ~/CodeRelay
 vp run dev:team</code></pre>
             <p class="setup-copy">Prefer not to use Git? <a href={SOURCE_ZIP_URL}>Download the latest source</a> as a zip, unzip it, and run <code>vp i</code> then <code>vp run dev:team</code> inside the folder.</p>
           </div>

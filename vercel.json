@@ -3,5 +3,20 @@
   "framework": "astro",
   "installCommand": "pnpm install --filter @t3tools/site...",
   "buildCommand": "pnpm --filter @t3tools/site build",
-  "outputDirectory": "apps/site/dist"
+  "outputDirectory": "apps/site/dist",
+  "headers": [
+    {
+      "source": "/install.(sh|ps1)",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/plain; charset=utf-8"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300"
+        }
+      ]
+    }
+  ]
 }

@@ -1,0 +1,219 @@
+# Builds unsigned desktop installers from main and keeps them published at fixed
+# URLs, so the site and the one-line installers can link to the newest build
+# without knowing a version:
+#
+#   https://github.com/<owner>/<repo>/releases/download/main-latest/<asset>
+#
+#   CodeRelay-windows-x64.exe
+#   CodeRelay-macos-arm64.dmg, CodeRelay-macos-x64.dmg
+#   CodeRelay-linux-x86_64.AppImage, CodeRelay-linux-arm64.AppImage
+#
+# Pull requests that touch this workflow build the installers to prove they
+# still work, but only pushes to main (and manual runs on main) publish them.
+name: Desktop Latest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/desktop-latest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize releases so a manifest cannot race another build's asset uploads.
+concurrency:
+  group: desktop-latest-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  # Let publishing finish: cancellation between installer and manifest uploads
+  # can leave clients with an incomplete update. Pending runs still coalesce.
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: main-latest
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      # One broken platform must not hold back the others' installers.
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            runner: windows-latest
+            platform: win
+            target: nsis
+            arch: x64
+            rust_target: x86_64-pc-windows-msvc
+            ext: exe
+            asset: CodeRelay-windows-x64.exe
+          # Both macOS builds run on Apple silicon; x64 cross-compiles.
+          - label: macOS arm64
+            runner: macos-latest
+            platform: mac
+            target: dmg
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            ext: dmg
+            asset: CodeRelay-macos-arm64.dmg
+          - label: macOS x64
+            runner: macos-latest
+            platform: mac
+            target: dmg
+            arch: x64
+            rust_target: x86_64-apple-darwin
+            ext: dmg
+            asset: CodeRelay-macos-x64.dmg
+          - label: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            target: AppImage
+            arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            ext: AppImage
+            asset: CodeRelay-linux-x86_64.AppImage
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            target: AppImage
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            ext: AppImage
+            asset: CodeRelay-linux-arm64.AppImage
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      # The resource monitor build needs the Spectre-mitigated MSVC libraries.
+      - name: Install Spectre-mitigated MSVC libs
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Install Linux desktop build libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      # No WSL runtime is passed, so the Windows installer ships without the
+      # embedded Linux CLI archive; the Windows-native backend is unaffected.
+      # No --signed: these builds are unsigned on every platform.
+      # The Clerk publishable key is public and baked into the bundle at build
+      # time; without it the app ships with no sign-in at all, so fail instead.
+      - name: Build installer
+        shell: bash
+        env:
+          T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+          CODERELAY_ACCOUNTS: "1"
+        run: |
+          if [[ -z "${T3CODE_CLERK_PUBLISHABLE_KEY:-}" ]]; then
+            echo "::error::Set the CLERK_PUBLISHABLE_KEY repository variable so the installer includes sign-in."
+            exit 1
+          fi
+          node scripts/build-desktop-artifact.ts \
+            --platform ${{ matrix.platform }} --target ${{ matrix.target }} --arch ${{ matrix.arch }} \
+            --build-version "0.0.0-main.${{ github.run_number }}" \
+            --verbose
+
+      # Windows also publishes its electron-updater feed. macOS and Linux ship
+      # installers only: both macOS arches would write the same latest-mac.yml.
+      - name: Stage installer
+        shell: bash
+        run: |
+          installer="$(ls release/*.${{ matrix.ext }} | head -n 1)"
+          test -n "$installer"
+          mkdir -p dist-installer
+          cp "$installer" "dist-installer/${{ matrix.asset }}"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            # Keep versioned assets for clients that already fetched an older
+            # manifest, as well as the fixed filename used by the website.
+            cp "$installer" dist-installer/
+            cp release/*.blockmap dist-installer/
+            cp release/latest.yml dist-installer/
+          fi
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist-installer/
+          if-no-files-found: error
+
+  publish:
+    name: Publish latest release
+    needs: build
+    # Publish whatever built, so one broken platform does not block the rest.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: dist-installer
+          merge-multiple: true
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          assets=(dist-installer/*.exe dist-installer/*.blockmap dist-installer/*.dmg dist-installer/*.AppImage)
+          if (( ${#assets[@]} == 0 )); then
+            echo "::error::No installers were built."
+            exit 1
+          fi
+          notes="Unsigned desktop installers built from main at ${GITHUB_SHA}."
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Latest main build" --notes "$notes"
+          fi
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          # Publish the manifest last so it only advertises downloadable assets.
+          manifests=(dist-installer/latest.yml)
+          if [[ -f "${manifests[0]}" ]]; then
+            gh release upload "$RELEASE_TAG" "${manifests[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          fi

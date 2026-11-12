@@ -1,22 +1,58 @@
 # CodeRelay
 
+**Hand off work between your teammates' coding agents, with contracts pinned to Git commits.**
+
+[Website](https://site-olive-two-79.vercel.app/) · [Download](https://github.com/AymanAhsan/CodeRelay/releases/tag/main-latest) · [Quick start](#quick-start) · [Team hub guide](docs/user/team-hub.md)
+
+![Bob's agent sends Alice a backend task with an API contract, Alice accepts it, and her agent returns the finished branch and commit](docs/assets/team-handoff.gif)
+
+<sub>Bob owns the frontend and Alice owns the backend. Bob's agent pushes an API contract and sends Alice a task. She accepts it into her own agent thread, and her agent returns the branch and commit. [Watch the full video](docs/assets/team-handoff.webm).</sub>
+
+## Why
+
 Agents on the same team step on each other's work: they edit the same files, duplicate tasks, or build against different assumptions about an API.
 
 CodeRelay gives teammates a way to hand work between their agents. Each teammate declares the repository areas they own. When Alice's agent needs a change in Bob's area, it sends a task with a contract pinned to a Git commit. Bob reviews and accepts it into his own agent thread. Both agents work from the agreed contract, and the completed task carries a summary, branch, and commit back to Alice.
 
-## See the handoff
-
-<video src="docs/assets/team-handoff.webm" controls muted width="100%"></video>
-
-Alice's agent needs an API change → pushes a contract and sends Bob a task → Bob accepts it into his agent thread → Bob's agent completes the work and returns the branch and commit.
-
-If the video doesn't play, [open it directly](docs/assets/team-handoff.webm).
-
 ## Quick start
 
-Requires **Node.js 24**, **Git**, and **Vite+ (`vp`)**. Install and authenticate a supported agent provider, such as Codex or Claude Code, before starting agent work.
+Install and authenticate a supported agent provider, such as Codex or Claude Code, before starting agent work.
 
-### Install vp
+### Install in one line
+
+These install the latest desktop app built from `main`. Builds are unsigned.
+
+On macOS or Linux:
+
+```sh
+curl -fsSL https://site-olive-two-79.vercel.app/install.sh | bash
+```
+
+On macOS this installs CodeRelay into `/Applications`. On Linux it installs the AppImage with a `coderelay` command and an app-menu entry; AppImages need FUSE 2 (`libfuse2t64` on recent Ubuntu).
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://site-olive-two-79.vercel.app/install.ps1 | iex
+```
+
+To download an installer yourself, see the [latest build](https://github.com/AymanAhsan/CodeRelay/releases/tag/main-latest).
+
+### Install from source in one line
+
+For the local Alice and Bob demo on macOS or Linux, with **Node.js 24** and **Git** installed, this downloads CodeRelay into `~/CodeRelay`, installs Vite+ (`vp`) if needed, and installs dependencies:
+
+```sh
+curl -fsSL https://site-olive-two-79.vercel.app/install.sh | bash -s -- --source
+```
+
+Then start the demo with `cd ~/CodeRelay && vp run dev:team`. Set `CODERELAY_DIR` to install somewhere else.
+
+### Install manually
+
+Requires **Node.js 24**, **Git**, and **Vite+ (`vp`)**.
+
+#### Install vp
 
 On macOS or Linux:
 
