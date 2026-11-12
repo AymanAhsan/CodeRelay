@@ -48,3 +48,5 @@ node_modules/
 
 # Gradle build caches from local Android module builds
 .gradle/
+
+*.stackdump

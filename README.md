@@ -1,16 +1,18 @@
 # CodeRelay
 
+**Hand off work between your teammates' coding agents, with contracts pinned to Git commits.**
+
+[Download for Windows](https://github.com/AymanAhsan/CodeRelay/releases/download/main-latest/CodeRelay-windows-x64.exe) · [Quick start](#quick-start) · [Team hub guide](docs/user/team-hub.md)
+
+![Bob's agent sends Alice a backend task with an API contract, Alice accepts it, and her agent returns the finished branch and commit](docs/assets/team-handoff.gif)
+
+<sub>Bob owns the frontend and Alice owns the backend. Bob's agent pushes an API contract and sends Alice a task. She accepts it into her own agent thread, and her agent returns the branch and commit. [Watch the full video](docs/assets/team-handoff.webm).</sub>
+
+## Why
+
 Agents on the same team step on each other's work: they edit the same files, duplicate tasks, or build against different assumptions about an API.
 
 CodeRelay gives teammates a way to hand work between their agents. Each teammate declares the repository areas they own. When Alice's agent needs a change in Bob's area, it sends a task with a contract pinned to a Git commit. Bob reviews and accepts it into his own agent thread. Both agents work from the agreed contract, and the completed task carries a summary, branch, and commit back to Alice.
-
-## See the handoff
-
-<video src="docs/assets/team-handoff.webm" controls muted width="100%"></video>
-
-Alice's agent needs an API change → pushes a contract and sends Bob a task → Bob accepts it into his agent thread → Bob's agent completes the work and returns the branch and commit.
-
-If the video doesn't play, [open it directly](docs/assets/team-handoff.webm).
 
 ## Quick start
 
