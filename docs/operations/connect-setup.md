@@ -1,12 +1,12 @@
-# T3 Connect setup
+# CodeRelay Connect setup
 
-Deployment and client configuration for T3 Connect. The [architecture note](../internals/t3-connect.md)
+Deployment and client configuration for CodeRelay Connect. The [architecture note](../internals/t3-connect.md)
 explains the trust boundaries; the [relay README](../../infra/relay/README.md#deployment) owns relay
 provisioning instructions.
 
 ## Public application configuration
 
-T3 Connect is disabled in a fresh clone. To build against the production deployment, copy the
+CodeRelay Connect is disabled in a fresh clone. To build against the production deployment, copy the
 repository-root example:
 
 ```sh
@@ -119,15 +119,15 @@ actual web and server ports. For example, with the default ports:
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
 T3CODE_PORT=13773 \
-  "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
+  "/Applications/CodeRelay (Alpha).app/Contents/MacOS/CodeRelay (Alpha)"
 ```
 
 Rebuild the signed app after native dependency, main-process, preload, entitlement, provisioning,
 or signing changes. Renderer edits can reuse it. Verify the installed bundle before testing:
 
 ```sh
-codesign --verify --deep --strict "/Applications/T3 Code (Alpha).app"
-codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
+codesign --verify --deep --strict "/Applications/CodeRelay (Alpha).app"
+codesign -d --entitlements :- "/Applications/CodeRelay (Alpha).app"
 ```
 
 ## Restricting sign-ups

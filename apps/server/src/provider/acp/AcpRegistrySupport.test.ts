@@ -1188,7 +1188,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("uninstalls only the T3-managed binary tree and is idempotent", () => {
+  it.effect("uninstalls only the CodeRelay-managed binary tree and is idempotent", () => {
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({

@@ -44,7 +44,7 @@ export function CompactBrandTitle(
         className="font-t3-medium text-foreground-muted"
         style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
       >
-        Code
+        CodeRelay
       </Text>
       <View
         className="rounded-full bg-subtle px-1.5 py-0.5"

@@ -28,7 +28,7 @@ const mcpSession = {
   browserToolsAvailable: true,
 };
 
-describe("pi T3 MCP injection", () => {
+describe("pi CodeRelay MCP injection", () => {
   it("always adds the permission bridge and configures MCP when available", () => {
     const resolvedArgs = resolvePiLaunchArgs(
       "--extension=/home/user/.pi/agent/extensions/demo.ts --session-dir=/tmp/pi-sessions --provider=anthropic --model=claude-sonnet --tools='' --name=-review --extension-flag=kept",

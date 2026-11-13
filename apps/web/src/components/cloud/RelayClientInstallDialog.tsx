@@ -69,8 +69,8 @@ export function RelayClientInstallDialog() {
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "CodeRelay is preparing this environment for secure access through T3 Connect."
-              : "CodeRelay needs the relay client to make this environment available through T3 Connect."}
+              ? "CodeRelay is preparing this environment for secure access through CodeRelay Connect."
+              : "CodeRelay needs the relay client to make this environment available through CodeRelay Connect."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>

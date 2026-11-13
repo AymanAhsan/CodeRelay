@@ -33,7 +33,7 @@ const SESSION_ID = "cca274e4-25ae-4171-b972-bbb31118517e";
 const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
-  "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back:",
+  "Note: the CodeRelay server restarted, and this background work was cancelled before it finished. It will not report back:",
   "- subagent: Background subagent test",
 ].join("\n");
 
@@ -41,7 +41,7 @@ const NOTE = [
  * The recorded background-subagent session cut by a restart right after the
  * root turn settled: the subagent's frames never arrive. A fresh runtime then
  * resumes the native session; each prompt frame it sends is pinned, so these
- * resumed turns are the provider's view of what T3 told it.
+ * resumed turns are the provider's view of what CodeRelay told it.
  */
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
   resumedPrompts: ReadonlyArray<string>,

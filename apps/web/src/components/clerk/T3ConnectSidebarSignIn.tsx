@@ -72,7 +72,7 @@ function ConfiguredT3ConnectSidebarSignIn() {
         <SidebarMenuItem>
           <SidebarMenuButton onClick={openAuthPrompt}>
             <LogInIcon />
-            <span>{hasCodeRelayAccounts() ? "Sign in to CodeRelay" : "Sign in to T3 Connect"}</span>
+            <span>{hasCodeRelayAccounts() ? "Sign in to CodeRelay" : "Sign in to CodeRelay Connect"}</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

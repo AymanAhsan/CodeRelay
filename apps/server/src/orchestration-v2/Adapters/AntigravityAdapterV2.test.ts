@@ -424,7 +424,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
 });
 
 describe("AntigravityAdapterV2 client file system under restrictive policies", () => {
-  // Antigravity asks before each of its own edits, so T3 serves an opted-in
+  // Antigravity asks before each of its own edits, so CodeRelay serves an opted-in
   // write whatever the thread's policy says, confined to the workspace.
   it.effect("serves in-workspace reads and writes and still refuses outside paths", () =>
     Effect.gen(function* () {

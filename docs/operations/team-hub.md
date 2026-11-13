@@ -18,13 +18,13 @@ For the first publish, run **Publish hub image** manually on `main`. Then open t
 
 ## The hub address must be reachable by teammates
 
-Each teammate's local T3 Code server connects to the hub, so the address has to work from their machine. `localhost` only works on the machine running the container.
+Each teammate's local CodeRelay server connects to the hub, so the address has to work from their machine. `localhost` only works on the machine running the container.
 
 Invite links are built from the address the admin's app saved when the hub was set up, which is the address in the setup link, not `HUB_PUBLIC_URL`. Set up through `http://localhost:8080/setup#token=…` and every invite will point at `localhost`. The Team hub panel warns when this happens. To fix it, open a setup link that uses the reachable address, or replace the host in an invite link by hand. The token after `#token=` does not depend on the host.
 
 ## Choosing an address
 
-If the hub runs on the same computer as your T3 Code server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can start it and share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Choose Tailscale there and select **Start hub**. Docker downloads the image on first use; allow several minutes. Stable installs use the server's exact version tag, while source and prerelease builds use `edge`. Each name gets its own volume. The steps below are for a hub on another machine, or to do the same by hand.
+If the hub runs on the same computer as your CodeRelay server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can start it and share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Choose Tailscale there and select **Start hub**. Docker downloads the image on first use; allow several minutes. Stable installs use the server's exact version tag, while source and prerelease builds use `edge`. Each name gets its own volume. The steps below are for a hub on another machine, or to do the same by hand.
 
 | Situation                                                | Use                                                                                                                                                      |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -50,17 +50,17 @@ Funnel makes the hub reachable from the public internet. Access is controlled by
 
 ## First team
 
-The container log prints a one-time setup link, using `HUB_PUBLIC_URL` as its address. In T3 Code, select **Set up a team** in the sidebar and paste the link to create the first team. Completing setup removes the link's token from the database, so the hub prints no setup link on later starts.
+The container log prints a one-time setup link, using `HUB_PUBLIC_URL` as its address. In CodeRelay, select **Set up a team** in the sidebar and paste the link to create the first team. Completing setup removes the link's token from the database, so the hub prints no setup link on later starts.
 
 Invites expire after 24 hours and admins can revoke them from the Team hub panel.
 
 ## Protocol
 
-The hub requires protocol version 7 for WebSocket connections and responds with HTTP 426 when the client uses a different version. Version 5 added per-member automatic-start allowances and durable task reservations. Version 6 added member activity (whether an agent is running, and which kind), which the hub keeps in memory and forgets on restart. Version 7 allows task text up to 2,000 characters so whole prompts can be handed off, and lets admins move queued tasks between members. Update all connected environments before enabling automatic tasks. Update the hub and every teammate's T3 Code together. An existing hub database gains the new columns on its first start. Previously accepted tasks have no thread link; post and accept a new task to use completion reporting for that work.
+The hub requires protocol version 7 for WebSocket connections and responds with HTTP 426 when the client uses a different version. Version 5 added per-member automatic-start allowances and durable task reservations. Version 6 added member activity (whether an agent is running, and which kind), which the hub keeps in memory and forgets on restart. Version 7 allows task text up to 2,000 characters so whole prompts can be handed off, and lets admins move queued tasks between members. Update all connected environments before enabling automatic tasks. Update the hub and every teammate's CodeRelay together. An existing hub database gains the new columns on its first start. Previously accepted tasks have no thread link; post and accept a new task to use completion reporting for that work.
 
 ## Local development with Alice and Bob
 
-Run these commands from the T3 Code checkout after [installing its dependencies](./development.md#first-checkout). Node 24 and Git must be available. The selected project must have a Git `origin` remote, which identifies the team's repository. Docker is not needed for this local launcher.
+Run these commands from the CodeRelay checkout after [installing its dependencies](./development.md#first-checkout). Node 24 and Git must be available. The selected project must have a Git `origin` remote, which identifies the team's repository. Docker is not needed for this local launcher.
 
 Start a local hub and two web/server sessions using this checkout as the project:
 
@@ -72,7 +72,7 @@ Alice is the team admin and Bob is a member; both join automatically and get a p
 
 ### Test another repository without building the app
 
-Pass the directory where Alice and Bob should work. The app code still runs from the T3 Code checkout, so you can test local app changes against a different project without compiling or installing T3 Code.
+Pass the directory where Alice and Bob should work. The app code still runs from the CodeRelay checkout, so you can test local app changes against a different project without compiling or installing CodeRelay.
 
 ```sh
 vp run dev:team --project-dir ../notes-api
@@ -106,13 +106,13 @@ Alice and Bob's server and web ports move automatically when occupied. Read thei
 
 State persists under `.t3/team-demo`, with separate Alice and Bob settings, credentials, and databases. Explicit `--project-dir` targets use separate state under `.t3/team-demo/projects`, keyed by directory and Git origin; returning to the same target resumes its sessions. Omitting the option keeps using the original demo state. Moving the target directory or changing its Git origin selects fresh state.
 
-If startup reports `Saved Alice membership belongs to a different team/repository.`, the saved team's repository differs from the selected project's Git origin. Restart with an explicit `--project-dir` for the intended repository to use its separate state. This also works with `--project-dir .` when testing the T3 Code checkout itself. Existing demo state is preserved.
+If startup reports `Saved Alice membership belongs to a different team/repository.`, the saved team's repository differs from the selected project's Git origin. Restart with an explicit `--project-dir` for the intended repository to use its separate state. This also works with `--project-dir .` when testing the CodeRelay checkout itself. Existing demo state is preserved.
 
 The launcher binds locally and does not change Tailscale configuration. If it was forcibly killed, confirm its processes have stopped and remove only `launcher.lock` from the state directory printed in the error before restarting.
 
 ### Check launcher changes
 
-Run the focused tests, lint, and hub typecheck from the T3 Code checkout:
+Run the focused tests, lint, and hub typecheck from the CodeRelay checkout:
 
 ```sh
 vp test run apps/hub/src/dev-team.test.ts
