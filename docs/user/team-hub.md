@@ -10,9 +10,17 @@ To join, select **Join with invite** in the sidebar (or **Join team** in the com
 
 Team admins can create 24-hour, single-use invites and remove members in that panel. To change the linked repository, select **Edit repository**, enter its Git remote URL, and save. The change applies to the whole team; teammates need the new repository added as a project to accept its tasks. Agents can read the team inbox, post notes or suggested tasks, claim files, and list interface changes with the team MCP tools.
 
-To create a self-hosted team, [run a hub server](../operations/team-hub.md), then select **Set up a team** in the sidebar and choose how teammates will reach it. Paste the hub's one-time setup link, then enter the team's name, Git remote URL, and your display name.
+Under **Invite address**, admins can edit the address used for new invitations. Use an address teammates can reach. Existing members keep their connections, and existing invite links keep their previous address. If you retire the old address, revoke outstanding invites and issue new ones.
 
-If you choose Tailscale, CodeRelay checks Tailscale on your computer, tells you what to fix if something is missing, and shares the hub for you. Invites then use the Tailscale address instead of the one printed in the setup link. Funnel makes the hub reachable from the internet so teammates install nothing; joining still needs an invite. The private option keeps it on your tailnet, so teammates need Tailscale and access to it. Sharing works when the hub runs on the same computer as your CodeRelay server. If no hub is running there yet, pick a container name and select **Start hub** to start it with Docker; the app shows the hub's local address and fills in its setup link. Docker downloads the hub image automatically on first use, which can take several minutes and needs an internet connection. If Docker refuses, the app shows Docker's message and what to do about it. Each container name keeps its own data, so starting under a new name creates a new, empty hub. The **Hub address** row shows how the hub is shared and stops sharing.
+To host your team's hub, open **Set up a team** in the sidebar. You can start a hub with Docker and share it through Tailscale from CodeRelay. If you already run an uninitialized hub, choose **Another address** and paste its one-time setup link. Enter the team's name, Git remote URL, and your display name to create the team. If the link points to localhost, enter the address your teammates will use in the field below the link.
+
+Choose public Funnel if teammates need to reach the hub without installing Tailscale. CodeRelay asks before making the address public, and teammates still need an invite to join. Choose private Tailscale if everyone has access to the same tailnet. Both options require Tailscale on the machine running the hub and your CodeRelay server.
+
+Select **Start hub** if there is no running hub. Docker may take several minutes to download the image on the first run. Once you share the hub, CodeRelay uses the share address for invitations. If you already initialized the hub, join the existing team using an invite from its administrator.
+
+If you leave setup before finishing, choose **Continue setup** when you return. CodeRelay remembers the hosting choices in this app and checks the current Docker and Tailscale state again. Manual setup links and form text need to be entered again. **Discard setup draft** clears the saved choices. The hub and its data stay on the host. See the [operations guide](../operations/team-hub.md) for manual setup.
+
+If the connection dropped after you selected **Create team**, CodeRelay tries to finish that submission when the server restarts. If the hub was still offline, select **Retry team setup** once it is reachable. On an up-to-date hub, retrying recovers the original membership if the team was already created.
 
 ## Handing work to a teammate's agent
 

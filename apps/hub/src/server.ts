@@ -86,7 +86,7 @@ function rejectUpgrade(socket: NodeStream.Duplex, status: number, message: strin
 // terminates the ones that miss a pong. `heartbeatMs` is overridable for tests.
 export async function createHubServer(
   store: HubStore,
-  options: { host: string; port: number; heartbeatMs?: number },
+  options: { host: string; port: number; heartbeatMs?: number; advertisedUrl?: string },
 ) {
   const connections = new Set<Connected>();
   const alive = new WeakSet<WebSocket>();
@@ -153,6 +153,17 @@ export async function createHubServer(
           string(input.teamName, "team name"),
           string(input.repo, "repository"),
           string(input.displayName, "display name"),
+          {
+            advertisedUrl:
+              input.advertisedUrl === undefined
+                ? undefined
+                : string(input.advertisedUrl, "advertised hub address"),
+            operationSecret:
+              input.operationSecret === undefined
+                ? undefined
+                : string(input.operationSecret, "setup operation", 43),
+            defaultAdvertisedUrl: options.advertisedUrl,
+          },
         );
         return json(response, 201, result);
       }
@@ -228,6 +239,13 @@ export async function createHubServer(
         store.updateRepo(member, string(input.repo, "repository"));
         // Earlier checks were against the old repository; each server reports again.
         for (const { id } of snapshot(member).members) repoAccess.delete(id);
+        broadcast(member.team_id);
+        return json(response, 200, { ok: true });
+      }
+      if (request.method === "POST" && url.pathname === "/api/team/advertised-url") {
+        const member = authenticate(store, request);
+        const input = await body(request);
+        store.updateAdvertisedUrl(member, string(input.url, "advertised hub address"));
         broadcast(member.team_id);
         return json(response, 200, { ok: true });
       }

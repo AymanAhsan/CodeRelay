@@ -19,6 +19,30 @@ afterEach(() => {
 });
 
 describe("team hub store", () => {
+  it("opens a legacy database without changing membership when it adds the invite address", () => {
+    const { dir, store } = open();
+    const { credential } = store.bootstrap(store.setupToken!, "Legacy team", "repo", "Alice");
+    store.db.exec("DROP TABLE team_advertised_urls");
+    store.close();
+    const reopened = new HubStore(dir);
+    try {
+      const admin = reopened.authenticate(credential);
+      expect(reopened.snapshot(admin, new Set()).team.advertisedUrl).toBeNull();
+      reopened.updateAdvertisedUrl(admin, "https://hub.example.com");
+      expect(reopened.createInvite(admin, admin.team_id).advertisedUrl).toBe(
+        "https://hub.example.com",
+      );
+      // Previous hub releases insert using the original column order.
+      reopened.db
+        .prepare("INSERT INTO teams VALUES (?,?,?,?)")
+        .run("old-insert", "Original writer", "repo", 1);
+      reopened.deleteTeam(admin, admin.team_id);
+      expect(reopened.db.prepare("SELECT * FROM team_advertised_urls").all()).toEqual([]);
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("links accepted threads and progress, persists completion, and supports reopening and completing again", () => {
     const { dir, store } = open();
     const admin = store.bootstrap(store.setupToken!, "Team", "repo", "Alice");
@@ -169,7 +193,11 @@ describe("team hub store", () => {
     const reopened = new HubStore(dir);
     try {
       const snapshot = reopened.snapshot(reopened.authenticate(bob.credential), new Set());
-      expect(snapshot.team).toEqual({ ...admin.team, repo: "https://github.com/example/new-repo" });
+      expect(snapshot.team).toEqual({
+        id: admin.team.id,
+        name: admin.team.name,
+        repo: "https://github.com/example/new-repo",
+      });
       expect(snapshot.members).toHaveLength(2);
       expect(snapshot.notes[0]?.text).toBe("Keep this note");
     } finally {

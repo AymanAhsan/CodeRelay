@@ -14,13 +14,15 @@ import {
   createTeamHubStateAtomFamily,
   runTeamHubAction,
   teamHubActionErrorMessage,
+  teamHubInviteLink,
+  teamHubInviteOrigin,
   teamHubTaskTurn,
   teamHubCloneRemote,
   type TeamHubAction,
 } from "@t3tools/client-runtime/state/team-hub";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { TeamHubInvite } from "@t3tools/contracts/teamHub";
+import { normalizeTeamHubAdvertisedUrl, type TeamHubInvite } from "@t3tools/contracts/teamHub";
 import * as Option from "effect/Option";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -136,6 +138,7 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
   const [editingAreas, setEditingAreas] = useState(false);
   const [areasDraft, setAreasDraft] = useState("");
   const [invite, setInvite] = useState<TeamHubInvite | null>(null);
+  const [addressDraft, setAddressDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const act = async (action: TeamHubAction) => {
@@ -144,7 +147,15 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
     const outcome = await command({ prepared, action });
     setBusy(false);
     if (AsyncResult.isSuccess(outcome)) {
+      if (
+        action.type === "bootstrap" ||
+        action.type === "retryBootstrap" ||
+        action.type === "join"
+      ) {
+        setLink("");
+      }
       if (action.type === "updateRepo") setEditingRepo(false);
+      if (action.type === "updateAdvertisedUrl") setAddressDraft(null);
       if (action.type === "publish" && action.input.type === "set_domains") setEditingAreas(false);
       if (action.type === "invite") setInvite(outcome.value as TeamHubInvite);
       if (
@@ -184,6 +195,11 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
   };
   if (!state) return <Text>Loading team hub…</Text>;
   const snapshot = state.snapshot;
+  const inviteOrigin =
+    state.url === null ? null : teamHubInviteOrigin(state.url, snapshot?.team.advertisedUrl);
+  const inviteLink =
+    state.url === null || invite === null ? null : teamHubInviteLink(state.url, invite);
+  const nextAddress = addressDraft === null ? null : normalizeTeamHubAdvertisedUrl(addressDraft);
   const teamProject = snapshot
     ? findTeamHubProject(snapshot.team.repo, prepared.environmentId, projects, clones)
     : undefined;
@@ -197,6 +213,16 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
     <View className="gap-4">
       {state.url === null ? (
         <View className="gap-3">
+          {state.hasPendingBootstrap && (
+            <>
+              <Text>Retry a submitted setup once its hub is reachable.</Text>
+              <Action
+                label="Retry team setup"
+                disabled={busy}
+                onPress={() => void act({ type: "retryBootstrap" })}
+              />
+            </>
+          )}
           <Text>
             {setup
               ? "Paste the one-time link printed by your hub."
@@ -477,19 +503,57 @@ function TeamHubContent({ prepared }: { prepared: PreparedConnection }) {
               </View>
               {self?.role === "admin" && (
                 <View className="gap-2">
+                  <Text className="font-t3-medium">Invite address</Text>
+                  <Text className="text-foreground-muted">
+                    {inviteOrigin ??
+                      (snapshot.team.advertisedUrl === undefined
+                        ? "Update this hub to set an invite address your teammates can reach."
+                        : "Set a hub address teammates can reach.")}
+                  </Text>
+                  {addressDraft !== null ? (
+                    <>
+                      <TextInput
+                        accessibilityLabel="Advertised hub address"
+                        placeholder="https://hub.example.com"
+                        value={addressDraft}
+                        onChangeText={setAddressDraft}
+                        maxLength={256}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        editable={!busy}
+                        className="rounded-xl bg-grouped-card p-3 text-foreground"
+                      />
+                      <Text className="text-foreground-muted">
+                        New invites use this address. Existing invites and connections keep their
+                        old address.
+                      </Text>
+                      <Action
+                        label="Save address"
+                        disabled={busy || nextAddress === null}
+                        onPress={() => {
+                          if (nextAddress !== null)
+                            void act({ type: "updateAdvertisedUrl", url: nextAddress });
+                        }}
+                      />
+                      <Action
+                        label="Cancel"
+                        disabled={busy}
+                        onPress={() => setAddressDraft(null)}
+                      />
+                    </>
+                  ) : snapshot.team.advertisedUrl !== undefined ? (
+                    <Action
+                      label="Edit invite address"
+                      disabled={busy}
+                      onPress={() => setAddressDraft(inviteOrigin ?? "")}
+                    />
+                  ) : null}
                   <Action
                     label="Create invite"
-                    disabled={busy}
+                    disabled={busy || inviteOrigin === null}
                     onPress={() => void act({ type: "invite" })}
                   />
-                  {invite && (
-                    <Text selectable>
-                      {new URL(
-                        `/join#token=${encodeURIComponent(invite.token)}`,
-                        state.url,
-                      ).toString()}
-                    </Text>
-                  )}
+                  {inviteLink !== null && <Text selectable>{inviteLink}</Text>}
                   <AdminInvites
                     prepared={prepared}
                     busy={busy}

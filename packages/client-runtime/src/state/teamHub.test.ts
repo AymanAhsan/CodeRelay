@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import { EnvironmentId, ProjectId, type ProjectCloneSnapshot } from "@t3tools/contracts";
 import type { TeamHubMember, TeamHubSnapshot, TeamHubTask } from "@t3tools/contracts/teamHub";
+import { TeamHubSnapshot as TeamHubSnapshotSchema } from "@t3tools/contracts/teamHub";
+const decodeTeamHubSnapshot = Schema.decodeSync(TeamHubSnapshotSchema);
 import type { EnvironmentProject } from "./models.ts";
 import {
   canManageTeamHubTasks,
@@ -16,8 +19,48 @@ import {
   parseTeamHubDomains,
   parseTeamHubLink,
   teamHubCloneRemote,
+  teamHubInviteLink,
+  teamHubInviteOrigin,
   withTeamHubOrigin,
 } from "./teamHub.ts";
+
+describe("team hub invite links", () => {
+  const invite = { id: "invite", token: "a+b", expiresAt: 20 };
+
+  it("reads a snapshot from a compatible hub that predates address editing", () => {
+    const id = "12345678-1234-1234-1234-123456789abc";
+    const snapshot = decodeTeamHubSnapshot({
+      team: { id, name: "Team", repo: "https://github.com/example/repo" },
+      selfId: id,
+      members: [],
+      summaries: [],
+      tasks: [],
+      notes: [],
+      claims: [],
+      contractChanges: [],
+    });
+    expect(snapshot.team.advertisedUrl).toBeUndefined();
+  });
+
+  it("uses the advertised address at issuance without reusing the member connection URL", () => {
+    expect(
+      teamHubInviteLink("http://localhost:8080", {
+        ...invite,
+        advertisedUrl: "https://hub.example.com:8443/path?unused=x#ignored",
+      }),
+    ).toBe("https://hub.example.com:8443/join#token=a%2Bb");
+  });
+
+  it("uses a reachable legacy address and declines loopback or credential-bearing origins", () => {
+    expect(teamHubInviteLink("http://192.168.1.20:8080", invite)).toBe(
+      "http://192.168.1.20:8080/join#token=a%2Bb",
+    );
+    expect(teamHubInviteLink("http://127.0.0.1:8080", invite)).toBeNull();
+    expect(
+      teamHubInviteOrigin("https://legacy.example.com", "https://user:pass@example.com"),
+    ).toBeNull();
+  });
+});
 
 describe("team repository projects", () => {
   const environmentId = EnvironmentId.make("connected-machine");

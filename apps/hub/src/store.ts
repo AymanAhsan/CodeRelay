@@ -19,13 +19,18 @@ import type {
   TeamHubTask,
   TeamHubTaskResult,
 } from "@t3tools/contracts/teamHub";
-import { matchesDomain } from "@t3tools/contracts/teamHub";
+import { matchesDomain, normalizeTeamHubAdvertisedUrl } from "@t3tools/contracts/teamHub";
 import type { ThreadId } from "@t3tools/contracts";
 
 const IDLE_ACTIVITY: TeamHubActivity = { provider: null, working: false };
 
-type TeamRow = { id: string; name: string; repo: string };
+type TeamRow = { id: string; name: string; repo: string; advertisedUrl: string | null };
 type MemberRow = { id: string; team_id: string; name: string; role: "admin" | "member" };
+type BootstrapOperationRow = {
+  payload_hash: string;
+  team_id: string;
+  member_id: string;
+};
 type MemberListRow = MemberRow & { domains_json: string; auto_accept_json: string };
 type SummaryRow = {
   id: string;
@@ -87,11 +92,21 @@ export class HubStore {
       CREATE TABLE IF NOT EXISTS teams (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, repo TEXT NOT NULL, created_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS team_advertised_urls (
+        team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+        advertised_url TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS members (
         id TEXT PRIMARY KEY, team_id TEXT NOT NULL REFERENCES teams(id), name TEXT NOT NULL,
         role TEXT NOT NULL, credential_hash TEXT NOT NULL UNIQUE, revoked_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS members_team ON members(team_id);
+      CREATE TABLE IF NOT EXISTS bootstrap_operations (
+        operation_hash TEXT PRIMARY KEY,
+        payload_hash TEXT NOT NULL,
+        team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+        member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE
+      );
       CREATE TABLE IF NOT EXISTS invites (
         id TEXT PRIMARY KEY, team_id TEXT NOT NULL REFERENCES teams(id),
         expires_at INTEGER NOT NULL, used_at INTEGER, revoked_at INTEGER
@@ -173,18 +188,89 @@ export class HubStore {
     }
   }
 
-  bootstrap(token: string, name: string, repo: string, displayName: string) {
-    const setup = this.db.prepare("SELECT value FROM meta WHERE key='setup_hash'").get() as
-      | { value: string }
-      | undefined;
-    if (!setup || hash(token) !== setup.value) throw new HubError("Invalid setup link", 403);
+  bootstrap(
+    token: string,
+    name: string,
+    repo: string,
+    displayName: string,
+    options: {
+      readonly advertisedUrl?: string | undefined;
+      readonly operationSecret?: string | undefined;
+      readonly defaultAdvertisedUrl?: string | undefined;
+    } = {},
+  ) {
+    const { advertisedUrl, operationSecret, defaultAdvertisedUrl } = options;
+    if (operationSecret !== undefined && !/^[A-Za-z0-9_-]{43}$/.test(operationSecret)) {
+      throw new HubError("Invalid setup operation", 400);
+    }
+    const normalizedUrl =
+      advertisedUrl === undefined ? null : normalizeTeamHubAdvertisedUrl(advertisedUrl);
+    if (advertisedUrl !== undefined && normalizedUrl === null) {
+      throw new HubError("Invalid advertised hub address", 400);
+    }
+    const operation =
+      operationSecret === undefined
+        ? null
+        : {
+            key: this.bootstrapDigest("retry", operationSecret),
+            payloadHash: this.bootstrapDigest(
+              "payload",
+              JSON.stringify([hash(token), name, repo, displayName, normalizedUrl]),
+            ),
+            credentialFor: (teamId: string) =>
+              this.bootstrapDigest("credential", JSON.stringify([teamId, operationSecret])),
+          };
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      if (operation !== null) {
+        const previous = this.db
+          .prepare(
+            "SELECT payload_hash,team_id,member_id FROM bootstrap_operations WHERE operation_hash=?",
+          )
+          .get(operation.key) as BootstrapOperationRow | undefined;
+        if (previous !== undefined) {
+          if (previous.payload_hash !== operation.payloadHash) {
+            throw new HubError("Setup details differ from the original request", 409);
+          }
+          const credential = operation.credentialFor(previous.team_id);
+          const admin = this.authenticate(credential);
+          if (
+            admin.id !== previous.member_id ||
+            admin.team_id !== previous.team_id ||
+            admin.role !== "admin"
+          ) {
+            throw new HubError("Setup membership is unavailable", 403);
+          }
+          const result = { team: this.getTeam(admin.team_id), memberId: admin.id, credential };
+          this.db.exec("COMMIT");
+          return result;
+        }
+      }
+      const setup = this.db.prepare("SELECT value FROM meta WHERE key='setup_hash'").get() as
+        | { value: string }
+        | undefined;
+      if (!setup || hash(token) !== setup.value) throw new HubError("Invalid setup link", 403);
       if (this.db.prepare("SELECT 1 FROM teams LIMIT 1").get()) {
         throw new HubError("Hub is already configured", 409);
       }
-      const team = this.createTeamRow(name, repo);
-      const member = this.createMember(team.id, displayName, "admin");
+      const team = this.createTeamRow(
+        name,
+        repo,
+        normalizedUrl ?? normalizeTeamHubAdvertisedUrl(defaultAdvertisedUrl ?? ""),
+      );
+      const member = this.createMember(
+        team.id,
+        displayName,
+        "admin",
+        operation?.credentialFor(team.id),
+      );
+      if (operation !== null) {
+        this.db
+          .prepare(
+            "INSERT INTO bootstrap_operations (operation_hash,payload_hash,team_id,member_id) VALUES (?,?,?,?)",
+          )
+          .run(operation.key, operation.payloadHash, team.id, member.memberId);
+      }
       this.db.prepare("DELETE FROM meta WHERE key='setup_hash'").run();
       this.db.exec("COMMIT");
       return { team, ...member };
@@ -194,9 +280,19 @@ export class HubStore {
     }
   }
 
-  private createTeamRow(name: string, repo: string): TeamRow {
-    const team = { id: NodeCrypto.randomUUID(), name, repo };
-    this.db.prepare("INSERT INTO teams VALUES (?,?,?,?)").run(team.id, name, repo, now());
+  private bootstrapDigest(purpose: "retry" | "payload" | "credential", input: string) {
+    return NodeCrypto.createHmac("sha256", this.signingKey)
+      .update(`first-team-${purpose}\0`)
+      .update(input)
+      .digest("base64url");
+  }
+
+  private createTeamRow(name: string, repo: string, advertisedUrl: string | null = null): TeamRow {
+    const team = { id: NodeCrypto.randomUUID(), name, repo, advertisedUrl };
+    this.db
+      .prepare("INSERT INTO teams (id,name,repo,created_at) VALUES (?,?,?,?)")
+      .run(team.id, name, repo, now());
+    if (advertisedUrl !== null) this.setAdvertisedUrl(team.id, advertisedUrl);
     return team;
   }
 
@@ -242,8 +338,12 @@ export class HubStore {
     }
   }
 
-  private createMember(teamId: string, name: string, role: "admin" | "member") {
-    const credential = secret();
+  private createMember(
+    teamId: string,
+    name: string,
+    role: "admin" | "member",
+    credential = secret(),
+  ) {
     const memberId = NodeCrypto.randomUUID();
     this.db
       .prepare("INSERT INTO members (id,team_id,name,role,credential_hash) VALUES (?,?,?,?,?)")
@@ -264,6 +364,9 @@ export class HubStore {
 
   createInvite(admin: MemberRow, teamId: string, lifetimeMs = 86_400_000) {
     this.requireAdmin(admin, teamId);
+    const address = this.db
+      .prepare("SELECT advertised_url FROM team_advertised_urls WHERE team_id=?")
+      .get(teamId) as { advertised_url: string } | undefined;
     const id = NodeCrypto.randomUUID();
     const expiresAt = now() + lifetimeMs;
     this.db
@@ -273,7 +376,12 @@ export class HubStore {
     const signature = NodeCrypto.createHmac("sha256", this.signingKey)
       .update(payload)
       .digest("base64url");
-    return { id, token: `${payload}.${signature}`, expiresAt };
+    return {
+      id,
+      token: `${payload}.${signature}`,
+      expiresAt,
+      advertisedUrl: address?.advertised_url ?? null,
+    };
   }
 
   revokeInvite(admin: MemberRow, teamId: string, inviteId: string) {
@@ -340,6 +448,31 @@ export class HubStore {
     this.db.prepare("UPDATE members SET auto_accept_json='{}' WHERE team_id=?").run(admin.team_id);
   }
 
+  updateAdvertisedUrl(admin: MemberRow, url: string) {
+    this.requireAdmin(admin, admin.team_id);
+    const advertisedUrl = normalizeTeamHubAdvertisedUrl(url);
+    if (advertisedUrl === null) throw new HubError("Invalid advertised hub address", 400);
+    this.setAdvertisedUrl(admin.team_id, advertisedUrl);
+  }
+
+  private getTeam(teamId: string): TeamRow {
+    return this.db
+      .prepare(
+        "SELECT t.id,t.name,t.repo,a.advertised_url AS advertisedUrl FROM teams t " +
+          "LEFT JOIN team_advertised_urls a ON a.team_id=t.id WHERE t.id=?",
+      )
+      .get(teamId) as TeamRow;
+  }
+
+  private setAdvertisedUrl(teamId: string, url: string) {
+    this.db
+      .prepare(
+        "INSERT INTO team_advertised_urls (team_id, advertised_url) VALUES (?,?) " +
+          "ON CONFLICT (team_id) DO UPDATE SET advertised_url=excluded.advertised_url",
+      )
+      .run(teamId, url);
+  }
+
   removeMember(admin: MemberRow, teamId: string, memberId: string) {
     this.requireAdmin(admin, teamId);
     if (admin.id === memberId) throw new HubError("Cannot remove yourself", 400);
@@ -379,9 +512,7 @@ export class HubStore {
     activity: ReadonlyMap<string, TeamHubActivity> = new Map(),
     repoAccess: ReadonlyMap<string, TeamHubRepoAccess> = new Map(),
   ): TeamHubSnapshot {
-    const team = this.db
-      .prepare("SELECT id,name,repo FROM teams WHERE id=?")
-      .get(member.team_id) as TeamRow;
+    const { id, name, repo, advertisedUrl } = this.getTeam(member.team_id);
     const members = this.db
       .prepare(
         "SELECT id,team_id,name,role,domains_json,auto_accept_json FROM members WHERE team_id=? AND revoked_at IS NULL",
@@ -411,7 +542,7 @@ export class HubStore {
       )
       .all(member.team_id) as ContractRow[];
     return {
-      team,
+      team: { id, name, repo, ...(member.role === "admin" ? { advertisedUrl } : {}) },
       selfId: member.id,
       members: members.map((row): TeamHubMember => ({
         id: row.id,
