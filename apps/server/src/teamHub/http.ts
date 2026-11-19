@@ -64,6 +64,16 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "retryBootstrap",
+        Effect.fn("teamHub.retryBootstrap")(function* () {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          yield* hub.retryBootstrap.pipe(
+            Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
+          );
+          return yield* state;
+        }),
+      )
+      .handle(
         "leave",
         Effect.fn("teamHub.leave")(function* () {
           yield* requireEnvironmentScope(AuthAccessWriteScope);
@@ -131,6 +141,16 @@ export const teamHubHttpApiLayer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthAccessWriteScope);
           yield* hub
             .updateRepo(payload.repo)
+            .pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
+          return yield* state;
+        }),
+      )
+      .handle(
+        "updateAdvertisedUrl",
+        Effect.fn("teamHub.updateAdvertisedUrl")(function* ({ payload }) {
+          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          yield* hub
+            .updateAdvertisedUrl(payload.url)
             .pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
           return yield* state;
         }),

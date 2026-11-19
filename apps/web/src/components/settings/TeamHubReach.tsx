@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { readTeamHubNetworkState } from "@t3tools/client-runtime/state/team-hub";
 import {
-  TEAM_HUB_DEFAULT_CONTAINER_NAME,
   teamHubDockerTag,
   TeamHubNetworkState,
   TeamHubReachability,
@@ -42,10 +41,8 @@ import { toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
 import {
   DEFAULT_HUB_PORT,
-  DEFAULT_SHARE_PORT,
   isTailscaleShareUrl,
   isValidContainerName,
-  normalizeHubAddress,
   presentNetworkState,
   presentReachability,
   presentStartFailure,
@@ -53,6 +50,11 @@ import {
   shareCommand,
   type ReachPresentation,
 } from "./TeamHubReach.logic";
+import {
+  advertisedTeamHubOrigin,
+  type LocalTeamHubSetup,
+  type TeamHubSetupDraft,
+} from "./teamHubSetup";
 
 const isNetworkState = Schema.is(TeamHubNetworkState);
 const isReachability = Schema.is(TeamHubReachability);
@@ -319,7 +321,7 @@ function ManualHubAddress({
   }
 
   const commit = () => {
-    const next = normalizeHubAddress(draft);
+    const next = advertisedTeamHubOrigin(draft);
     setInvalid(next === null);
     if (next !== null) onAddress(next);
   };
@@ -398,12 +400,13 @@ function HubStart({
     readonly restarting: boolean;
   } | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
-  const validName = isValidContainerName(name);
+  const [nameDraft, setNameDraft] = useState(name);
+  const validName = isValidContainerName(nameDraft);
 
   // Starting creates a container; restarting runs the one that already holds the name.
   const run = async (type: "startHub" | "restartHub") => {
     if (!validName || busy !== null) return;
-    const input = { hubPort, name };
+    const input = { hubPort, name: nameDraft };
     setBusy(type === "startHub" ? "start" : "restart");
     // A restart is asked for from the failure notice, which keeps the button's spinner.
     if (type === "startHub") setFailure(null);
@@ -433,10 +436,12 @@ function HubStart({
             <Input
               size="sm"
               font="mono"
-              value={name}
+              value={nameDraft}
               aria-invalid={!validName}
               onChange={(event) => {
-                onName(event.target.value.trim());
+                const next = event.target.value.trim();
+                setNameDraft(next);
+                if (isValidContainerName(next)) onName(next);
                 setFailure(null);
               }}
               onKeyDown={(event) => {
@@ -521,52 +526,77 @@ function StartedHubNotice({ started }: { started: StartedHub }) {
 export function HubSharing({
   prepared,
   exposure,
+  draft,
+  setupStatus,
+  onDraft,
   onAddress,
-  onSetupLink,
-  onLocalHub,
+  onSetupState,
 }: {
   prepared: PreparedConnection;
   exposure: TeamHubExposure;
+  draft: TeamHubSetupDraft;
+  setupStatus: LocalTeamHubSetup["status"];
+  onDraft: (patch: Partial<TeamHubSetupDraft>) => void;
   onAddress: (address: string | null) => void;
-  /** Receives the unused setup link from a new or already running Docker hub. */
-  onSetupLink: (link: string) => void;
-  onLocalHub: (input: TeamHubStartInput | null) => void;
+  onSetupState: (state: LocalTeamHubSetup) => void;
 }) {
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(prepared.environmentId));
   const imageTag =
     serverConfig?.environment.teamHubDockerTag ??
     teamHubDockerTag(serverConfig?.environment.serverVersion ?? "dev");
-  const [containerName, setContainerName] = useState(TEAM_HUB_DEFAULT_CONTAINER_NAME);
+  const { name: containerName, hubPort, servePort } = draft;
   const [started, setStarted] = useState<StartedHub | null>(null);
-  const [hubPort, setHubPort] = useState(DEFAULT_HUB_PORT);
-  const [hubPortDraft, setHubPortDraft] = useState(String(DEFAULT_HUB_PORT));
-  const [servePort, setServePort] = useState(DEFAULT_SHARE_PORT);
+  const [hubPortDraft, setHubPortDraft] = useState(String(hubPort));
+  const configuredSetup = useMemo(
+    () => ({ name: containerName, hubPort }),
+    [containerName, hubPort],
+  );
+  const [requestedSetup, setRequestedSetup] = useState<TeamHubStartInput | null>(null);
+  const setupInput =
+    requestedSetup?.name === containerName && requestedSetup.hubPort === hubPort
+      ? requestedSetup
+      : configuredSetup;
+  const [confirmingFunnel, setConfirmingFunnel] = useState(false);
   const input = useMemo(() => ({ hubPort, servePort, exposure }), [hubPort, servePort, exposure]);
   const { shown, busy, requestError, recheck, run } = useHubNetwork(prepared, input);
 
   const command = useAtomCommand(teamHubActionCommand, { reportFailure: false });
   useEffect(() => {
     let cancelled = false;
-    if (!isValidContainerName(containerName)) return;
+    if (!isValidContainerName(setupInput.name)) {
+      onSetupState({ status: "unavailable" });
+      return;
+    }
+    onSetupState({ status: "checking" });
     void command({
       prepared,
-      action: { type: "setupLink", input: { name: containerName, hubPort } },
+      action: { type: "setupLink", input: setupInput },
     }).then((outcome) => {
-      if (!cancelled && AsyncResult.isSuccess(outcome) && isSetupLinkResult(outcome.value)) {
-        onLocalHub(outcome.value.canCreateTeam ? { name: containerName, hubPort } : null);
-        if (outcome.value.setupLink !== null) onSetupLink(outcome.value.setupLink);
+      if (cancelled) return;
+      if (AsyncResult.isSuccess(outcome) && isSetupLinkResult(outcome.value)) {
+        const { setupLink, canCreateTeam } = outcome.value;
+        onSetupState(
+          setupLink !== null
+            ? { status: "pending", setupLink }
+            : { status: canCreateTeam ? "initialized" : "unavailable" },
+        );
+      } else {
+        onSetupState({ status: "unavailable" });
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [command, prepared, containerName, hubPort, onSetupLink, onLocalHub]);
+  }, [command, prepared, onSetupState, setupInput]);
 
   const [manualAddress, setManualAddress] = useState<string | null>(null);
 
   // A share Tailscale confirms outranks one the person typed in.
-  const detectedAddress = shown?.status === "exposed" && shown.reachable ? shown.url : null;
-  const address = detectedAddress ?? manualAddress;
+  const detectedAddress =
+    shown?.status === "exposed" && shown.reachable && shown.exposure === exposure
+      ? shown.url
+      : null;
+  const address = detectedAddress ?? (shown?.status === "blocked" ? manualAddress : null);
   useEffect(() => {
     onAddress(address);
   }, [address, onAddress]);
@@ -576,7 +606,7 @@ export function HubSharing({
   const commitHubPort = () => {
     const next = Number.parseInt(hubPortDraft, 10);
     if (Number.isInteger(next) && next >= 1 && next <= 65535) {
-      setHubPort(next);
+      onDraft({ hubPort: next });
     } else {
       setHubPortDraft(String(hubPort));
     }
@@ -594,9 +624,15 @@ export function HubSharing({
           imageTag,
         })}
         busy={busy}
-        onRetry={recheck}
-        onShare={() => void run("exposeHub")}
-        onUsePort={setServePort}
+        onRetry={() => {
+          setRequestedSetup({ ...configuredSetup });
+          recheck();
+        }}
+        onShare={() => {
+          if (exposure === "public") setConfirmingFunnel(true);
+          else void run("exposeHub");
+        }}
+        onUsePort={(next) => onDraft({ servePort: next })}
       >
         {shown.status === "exposed" ? (
           <Input
@@ -607,6 +643,18 @@ export function HubSharing({
             value={shown.url}
             onFocus={(event) => event.target.select()}
           />
+        ) : null}
+        {shown.status === "exposed" && shown.exposure !== exposure ? (
+          <Button
+            size="xs"
+            disabled={busy}
+            onClick={() => {
+              if (exposure === "public") setConfirmingFunnel(true);
+              else void run("exposeHub");
+            }}
+          >
+            {exposure === "public" ? "Switch to Funnel" : "Switch to private sharing"}
+          </Button>
         ) : null}
         {shown.status === "no-hub" ? (
           <label className="flex items-center gap-2 text-xs">
@@ -627,17 +675,22 @@ export function HubSharing({
           </label>
         ) : null}
         {/* A share can outlive its hub (Tailscale keeps it), so an address that does not answer needs the button too. */}
-        {shown.status === "no-hub" || (shown.status === "exposed" && !shown.reachable) ? (
+        {shown.status === "no-hub" ||
+        (shown.status === "exposed" && !shown.reachable) ||
+        (shown.status === "blocked" &&
+          (setupStatus === "unavailable" || setupStatus === "checking")) ? (
           <HubStart
             prepared={prepared}
             hubPort={hubPort}
             name={containerName}
-            onName={setContainerName}
+            onName={(name) => onDraft({ name })}
             onStarted={(next) => {
               setStarted(next);
-              onLocalHub({ name: next.name, hubPort: Number(new URL(next.address).port) });
-              if (next.setupLink !== null) onSetupLink(next.setupLink);
-              recheck();
+              const nextPort = Number(new URL(next.address).port);
+              onDraft({ name: next.name, hubPort: nextPort });
+              setHubPortDraft(String(nextPort));
+              setRequestedSetup({ name: next.name, hubPort: nextPort });
+              if (nextPort === hubPort) recheck();
             }}
           />
         ) : null}
@@ -654,6 +707,28 @@ export function HubSharing({
           onAddress={setManualAddress}
         />
       ) : null}
+      <AlertDialog open={confirmingFunnel} onOpenChange={setConfirmingFunnel}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Make this hub public?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Anyone on the internet can reach the hub address. Teammates still need an invite to
+              join, and team data requires a membership credential.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              onClick={() => {
+                setConfirmingFunnel(false);
+                void run("exposeHub");
+              }}
+            >
+              Enable Funnel
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </div>
   );
 }

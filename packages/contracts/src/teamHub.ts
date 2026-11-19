@@ -8,6 +8,35 @@ export const TEAM_HUB_PROTOCOL_VERSION = 8;
 const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 const Id = Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/));
 
+/** Invitations use a teammate-facing origin and carry their token only in the fragment. */
+export function normalizeTeamHubAdvertisedUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username ||
+      url.password ||
+      url.origin.length > 256
+    )
+      return null;
+    const host = url.hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, "")
+      .replace(/\.+$/, "");
+    return host === "localhost" ||
+      host.endsWith(".localhost") ||
+      (host.startsWith("127.") && /^\d+(\.\d+){3}$/.test(host)) ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "::" ||
+      /^::ffff:(?:7f[0-9a-f]{2}:|0:0$)/.test(host)
+      ? null
+      : url.origin;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Task text can carry a whole prompt handed off from the composer. Kept modest because every
  * snapshot resends every task.
@@ -141,7 +170,13 @@ export const TeamHubContractChange = Schema.Struct({
 export type TeamHubContractChange = typeof TeamHubContractChange.Type;
 
 export const TeamHubSnapshot = Schema.Struct({
-  team: Schema.Struct({ id: Id, name: Text, repo: Text }),
+  team: Schema.Struct({
+    id: Id,
+    name: Text,
+    repo: Text,
+    /** Visible to admins on supported hubs. A null value means the admin can set it. */
+    advertisedUrl: Schema.optionalKey(Schema.NullOr(Text)),
+  }),
   selfId: Id,
   members: Schema.Array(TeamHubMember),
   summaries: Schema.Array(TeamHubSummary),
@@ -157,6 +192,8 @@ export const TeamHubState = Schema.Struct({
   status: Schema.Literals(["disconnected", "connecting", "connected"]),
   snapshot: Schema.NullOr(TeamHubSnapshot),
   error: Schema.NullOr(Schema.String),
+  /** The local environment can retry its last submitted setup from secure storage. */
+  hasPendingBootstrap: Schema.optionalKey(Schema.Boolean),
 });
 export type TeamHubState = typeof TeamHubState.Type;
 
@@ -330,7 +367,13 @@ export const TeamHubReachability = Schema.Struct({
 });
 export type TeamHubReachability = typeof TeamHubReachability.Type;
 
-export const TeamHubInvite = Schema.Struct({ id: Id, token: Text, expiresAt: Schema.Number });
+export const TeamHubInvite = Schema.Struct({
+  id: Id,
+  token: Text,
+  expiresAt: Schema.Number,
+  /** The address when this invite was created, if configured. */
+  advertisedUrl: Schema.optionalKey(Schema.NullOr(Text)),
+});
 export type TeamHubInvite = typeof TeamHubInvite.Type;
 export const TeamHubInviteRecord = Schema.Struct({
   id: Id,
@@ -342,6 +385,7 @@ export type TeamHubInviteRecord = typeof TeamHubInviteRecord.Type;
 export const TeamHubRevokeInviteInput = Schema.Struct({ inviteId: Id });
 
 export const TeamHubUpdateRepoInput = Schema.Struct({ repo: Text });
+export const TeamHubUpdateAdvertisedUrlInput = Schema.Struct({ url: Text });
 
 export const TeamHubSetDomainsInput = Schema.Struct({ domains: TeamHubDomains });
 

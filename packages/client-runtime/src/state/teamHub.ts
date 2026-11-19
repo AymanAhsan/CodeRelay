@@ -4,6 +4,7 @@ import type {
   TeamHubCreateLocalTeamInput,
   TeamHubClientMessage,
   TeamHubJoinInput,
+  TeamHubInvite,
   TeamHubBootstrapInput,
   TeamHubContractRef,
   TeamHubMember,
@@ -11,7 +12,11 @@ import type {
   TeamHubSnapshot,
   TeamHubTask,
 } from "@t3tools/contracts/teamHub";
-import { matchesDomain, TEAM_HUB_TASK_TEXT_MAX_LENGTH } from "@t3tools/contracts/teamHub";
+import {
+  matchesDomain,
+  normalizeTeamHubAdvertisedUrl,
+  TEAM_HUB_TASK_TEXT_MAX_LENGTH,
+} from "@t3tools/contracts/teamHub";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
 import {
@@ -259,6 +264,7 @@ export function formatTeamHubContract(contract: TeamHubContractRef): string {
 export type TeamHubAction =
   | { readonly type: "join"; readonly input: TeamHubJoinInput }
   | { readonly type: "bootstrap"; readonly input: TeamHubBootstrapInput }
+  | { readonly type: "retryBootstrap" }
   | { readonly type: "exposeHub"; readonly input: TeamHubNetworkInput }
   | { readonly type: "unexposeHub"; readonly input: TeamHubNetworkInput }
   | { readonly type: "checkHub"; readonly input: TeamHubCheckInput }
@@ -272,6 +278,7 @@ export type TeamHubAction =
   | { readonly type: "invite" }
   | { readonly type: "revokeInvite"; readonly inviteId: string }
   | { readonly type: "updateRepo"; readonly repo: string }
+  | { readonly type: "updateAdvertisedUrl"; readonly url: string }
   | { readonly type: "removeMember"; readonly memberId: string }
   | {
       readonly type: "decideTask";
@@ -303,6 +310,21 @@ export function parseTeamHubLink(value: string): { url: string; token: string } 
   } catch {
     return null;
   }
+}
+
+export function teamHubInviteOrigin(
+  connectorUrl: string,
+  advertisedUrl: string | null | undefined,
+): string | null {
+  return normalizeTeamHubAdvertisedUrl(advertisedUrl ?? connectorUrl);
+}
+
+export function teamHubInviteLink(connectorUrl: string, invite: TeamHubInvite): string | null {
+  const origin = teamHubInviteOrigin(connectorUrl, invite.advertisedUrl);
+  if (origin === null) return null;
+  const link = new URL("/join", origin);
+  link.hash = `token=${encodeURIComponent(invite.token)}`;
+  return link.toString();
 }
 
 /**
@@ -409,8 +431,16 @@ export const runTeamHubAction = Effect.fn("clientRuntime.teamHub.action")(functi
     case "bootstrap":
       return yield* executeAuthenticatedEnvironmentHttpRequest({
         ...common,
+        timeoutMs: 20_000,
         url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.bootstrap(),
         request: ({ client, headers }) => client.bootstrap({ headers, payload: action.input }),
+      });
+    case "retryBootstrap":
+      return yield* executeAuthenticatedEnvironmentHttpRequest({
+        ...common,
+        timeoutMs: 20_000,
+        url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.retryBootstrap(),
+        request: ({ client, headers }) => client.retryBootstrap({ headers }),
       });
     case "join":
       return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -512,6 +542,13 @@ export const runTeamHubAction = Effect.fn("clientRuntime.teamHub.action")(functi
         url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.updateRepo(),
         request: ({ client, headers }) =>
           client.updateRepo({ headers, payload: { repo: action.repo } }),
+      });
+    case "updateAdvertisedUrl":
+      return yield* executeAuthenticatedEnvironmentHttpRequest({
+        ...common,
+        url: (base) => makeEnvironmentHttpApiUrlBuilder(base).teamHub.updateAdvertisedUrl(),
+        request: ({ client, headers }) =>
+          client.updateAdvertisedUrl({ headers, payload: { url: action.url } }),
       });
     case "removeMember":
       return yield* executeAuthenticatedEnvironmentHttpRequest({

@@ -2,11 +2,29 @@
 
 The hub is a small server with a SQLite database. Run it on any machine your teammates can reach, such as the PC you already use. It must stay on, with Docker running, for teammates to see each other. If it is offline, local agent work continues and team updates resume when it reconnects.
 
+## Quick start for self-hosted teams
+
+1. Start Docker and sign in to Tailscale on the computer running CodeRelay.
+2. In CodeRelay, select **Set up a team**. Choose public Funnel for teammates who do not use Tailscale or private sharing for teammates on the same tailnet.
+3. If a hub is not running, select **Start hub** and wait for the image to download and the hub to start. Share the hub when prompted. Public Funnel requires your confirmation.
+4. Enter your team name, your display name, and a Git remote that teammates can clone. Create the team and generate an invite.
+5. On a teammate's computer, use **Join with invite** and paste the link. Open an existing checkout or select **Clone & open**.
+
+If you leave setup, use **Continue setup** when you return. CodeRelay saves hosting choices in this app and checks Docker and Tailscale again. If someone else already initialized the hub, ask the existing team's admin for an invite. Discarding the draft leaves the container and volume intact.
+
+If CodeRelay closes or loses its connection after you submit **Create team**, it tries the submitted setup again on startup using its private credential store. If the hub is still unavailable, use **Retry team setup** once it is back online. Updated hubs return the original admin membership if the first request already created it. A hub that predates this feature cannot recover a bootstrap that consumed the setup token without returning the membership.
+
+## Manual Docker deployment
+
+If the hub runs on a separate machine, or your team uses a LAN address or an existing proxy, run it manually. Substitute the release version of your CodeRelay server and the address teammates can reach.
+
 ```bash
-docker run -d -p 8080:8080 -v hub-data:/data -e HUB_PUBLIC_URL=<address teammates will use> ghcr.io/aymanahsan/coderelay-hub:latest
+docker run -d -p 8080:8080 -v hub-data:/data \
+  -e HUB_PUBLIC_URL="http://192.168.1.20:8080" \
+  "ghcr.io/aymanahsan/coderelay-hub:${HUB_VERSION:?Set this to your CodeRelay release version}"
 ```
 
-For manual runs, replace `latest` with the version of your CodeRelay server to keep the hub protocol compatible. Development and nightly builds use `edge`. To build locally instead, run `docker build -f apps/hub/Dockerfile -t t3-team-hub .` from a checkout and use `t3-team-hub` in your run command.
+Development and nightly builds use `edge`. To build locally, run `docker build -f apps/hub/Dockerfile -t t3-team-hub .` from a checkout and use `t3-team-hub` in your run command.
 
 State lives in `/data/hub.sqlite`. Keep `/data` on a persistent volume: recreating the container without it creates an empty hub, and every member's credential stops working. Back the volume up, or use SQLite's backup API while the hub is running.
 
@@ -20,11 +38,11 @@ For the first publish, run **Publish hub image** manually on `main`. Then open t
 
 Each teammate's local CodeRelay server connects to the hub, so the address has to work from their machine. `localhost` only works on the machine running the container.
 
-Invite links are built from the address the admin's app saved when the hub was set up, which is the address in the setup link, not `HUB_PUBLIC_URL`. Set up through `http://localhost:8080/setup#token=…` and every invite will point at `localhost`. The Team hub panel warns when this happens. To fix it, open a setup link that uses the reachable address, or replace the host in an invite link by hand. The token after `#token=` does not depend on the host.
+Guided setup saves the confirmed share address for invitations. For a manual hub, `HUB_PUBLIC_URL` determines the address printed in the setup link and supplies a default for the team's invite address. In **Set up a team → Another address**, paste the link and enter an address teammates can reach if the printed address is local or outdated.
+
+For an existing team, an admin can open **Invite address → Edit address** to save a new address for that team's invitations. This also fixes teams whose original connection was through localhost. If the edit option is missing, update the hub. Members keep their saved connection and credentials. Already issued invite links keep their old address and tokens remain valid until used, expired, or revoked. When retiring the old address, revoke outstanding invites and issue new ones. Verify the new address from a teammate's machine before sharing it.
 
 ## Choosing an address
-
-If the hub runs on the same computer as your CodeRelay server, **Team hub → Set up a hub** (sidebar, **Set up a team**) can start it and share it over Tailscale for you, publicly with Funnel or privately on your tailnet. Choose Tailscale there and select **Start hub**. Docker downloads the image on first use; allow several minutes. Stable installs use the server's exact version tag, while source and prerelease builds use `edge`. Each name gets its own volume. The steps below are for a hub on another machine, or to do the same by hand.
 
 | Situation                                                | Use                                                                                                                                                      |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -32,6 +50,14 @@ If the hub runs on the same computer as your CodeRelay server, **Team hub → Se
 | Teammates anywhere, no cost, nothing for them to install | [Tailscale Funnel](#tailscale-funnel)                                                                                                                    |
 | Teammates anywhere, hub kept off the public internet     | A Tailscale tailnet (or ZeroTier, WireGuard). Every teammate installs the client and joins the same network, then you use the host's private name or IP. |
 | A short demo                                             | `cloudflared tunnel --url http://localhost:8080`. The URL changes on every restart, which breaks saved addresses and invites.                            |
+
+### Local network
+
+Use the host's LAN IP and the published Docker port. Allow inbound traffic to that port through the host firewall. Every teammate must be on a network that can reach the host.
+
+### Private Tailscale networking
+
+Make sure teammates can access the same tailnet and its access policy permits their connections. Use the private Tailscale name or IP and test the address from a teammate's computer before sharing invites.
 
 ### Tailscale Funnel
 
@@ -42,7 +68,9 @@ Funnel gives the host a stable public HTTPS address, so teammates install nothin
 3. Start the hub with that address, then expose it:
 
    ```bash
-   docker run -d -p 8080:8080 -v hub-data:/data -e HUB_PUBLIC_URL=https://my-pc.<tailnet>.ts.net ghcr.io/aymanahsan/coderelay-hub:latest
+   docker run -d -p 8080:8080 -v hub-data:/data \
+     -e HUB_PUBLIC_URL="https://my-pc.<tailnet>.ts.net" \
+     "ghcr.io/aymanahsan/coderelay-hub:${HUB_VERSION:?Set this to your CodeRelay release version}"
    tailscale funnel 8080
    ```
 
@@ -50,13 +78,20 @@ Funnel makes the hub reachable from the public internet. Access is controlled by
 
 ## First team
 
-The container log prints a one-time setup link, using `HUB_PUBLIC_URL` as its address. In CodeRelay, select **Set up a team** in the sidebar and paste the link to create the first team. Completing setup removes the link's token from the database, so the hub prints no setup link on later starts.
+For a manually deployed hub, get the one-time setup link from the container log and paste it under **Set up a team → Another address**. Completing setup consumes the token, so the hub prints no setup link on later starts.
 
 Invites expire after 24 hours and admins can revoke them from the Team hub panel.
 
+### Verify a handoff between networks
+
+1. Start and share the hub on the first computer. From a second computer on a separate network, join with a fresh invite and open or clone the team's Git repository.
+2. From the first computer, propose a task assigned to the second teammate using a contract committed and pushed to the shared remote.
+3. On the second computer, confirm that the task displays the expected commit, then accept it. In the accepted thread, complete the work, push the branch, and report completion using `team_complete_task`.
+4. On the first computer, confirm that the task reports completion with the summary, branch, and full commit. From each computer, use **Check connection** if updates stop arriving.
+
 ## Protocol
 
-The hub requires protocol version 7 for WebSocket connections and responds with HTTP 426 when the client uses a different version. Version 5 added per-member automatic-start allowances and durable task reservations. Version 6 added member activity (whether an agent is running, and which kind), which the hub keeps in memory and forgets on restart. Version 7 allows task text up to 2,000 characters so whole prompts can be handed off, and lets admins move queued tasks between members. Update all connected environments before enabling automatic tasks. Update the hub and every teammate's CodeRelay together. An existing hub database gains the new columns on its first start. Previously accepted tasks have no thread link; post and accept a new task to use completion reporting for that work.
+The hub requires protocol version 8 for WebSocket connections and responds with HTTP 426 when the client uses a different version. Version 8 added repository access status to member snapshots. The advertised invite address is optional, so clients and hubs on version 8 can connect whether or not they support editing it. On startup, the hub creates a separate table for invite addresses in existing databases.
 
 ## Local development with Alice and Bob
 

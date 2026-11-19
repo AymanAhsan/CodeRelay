@@ -20,6 +20,133 @@ function nextMessage(socket: WebSocket): Promise<unknown> {
 }
 
 describe("team hub server", () => {
+  it("uses one membership for concurrent retries of the original bootstrap", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-bootstrap-"));
+    dirs.push(dir);
+    const store = new HubStore(dir);
+    const server = await createHubServer(store, { host: "127.0.0.1", port: 0 });
+    const input = {
+      token: store.setupToken!,
+      teamName: "Engineering",
+      repo: "https://github.com/example/repo",
+      displayName: "Alice",
+      operationSecret: Buffer.alloc(32, 1).toString("base64url"),
+    };
+    const bootstrap = (payload: unknown) =>
+      fetch(`http://127.0.0.1:${server.port}/api/bootstrap`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    let original: { credential: string; memberId: string };
+    try {
+      const [first, retry] = await Promise.all([bootstrap(input), bootstrap(input)]);
+      expect([first.status, retry.status]).toEqual([201, 201]);
+      original = (await first.json()) as typeof original;
+      expect(await retry.json()).toEqual(original);
+      expect((await bootstrap({ ...input, repo: "https://github.com/example/other" })).status).toBe(
+        409,
+      );
+      expect(
+        (await bootstrap({ ...input, operationSecret: Buffer.alloc(32, 2).toString("base64url") }))
+          .status,
+      ).toBe(403);
+      expect((await bootstrap({ ...input, operationSecret: undefined })).status).toBe(403);
+      expect(store.db.prepare("SELECT COUNT(*) AS count FROM teams").get()).toMatchObject({
+        count: 1,
+      });
+      expect(store.db.prepare("SELECT COUNT(*) AS count FROM members").get()).toMatchObject({
+        count: 1,
+      });
+      const operations = store.db.prepare("SELECT * FROM bootstrap_operations").all();
+      expect(operations).toHaveLength(1);
+      expect(operations[0]).toMatchObject({ member_id: original.memberId });
+      expect(JSON.stringify(operations)).not.toContain(input.operationSecret);
+      expect(JSON.stringify(operations)).not.toContain(input.token);
+      expect(JSON.stringify(operations)).not.toContain(original.credential);
+    } finally {
+      await server.close();
+      store.close();
+    }
+    const reopened = new HubStore(dir);
+    try {
+      expect(
+        reopened.bootstrap(input.token, input.teamName, input.repo, input.displayName, {
+          operationSecret: input.operationSecret,
+          defaultAdvertisedUrl: "https://changed.example.com",
+        }),
+      ).toEqual(original);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it("lets admins change their team's invite address without affecting membership or existing invites", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-address-"));
+    dirs.push(dir);
+    const store = new HubStore(dir);
+    const server = await createHubServer(store, {
+      host: "127.0.0.1",
+      port: 0,
+      advertisedUrl: "https://first.example.com",
+    });
+    const post = (path: string, input: unknown, credential?: string) =>
+      fetch(`http://127.0.0.1:${server.port}/api/${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(credential ? { authorization: `Bearer ${credential}` } : {}),
+        },
+        body: JSON.stringify(input),
+      });
+    try {
+      const bootstrapped = await post("bootstrap", {
+        token: store.setupToken,
+        teamName: "Engineering",
+        displayName: "Alice",
+        repo: "https://github.com/example/repo",
+      });
+      expect(bootstrapped.status).toBe(201);
+      const { credential } = (await bootstrapped.json()) as { credential: string };
+      const admin = store.authenticate(credential);
+      const bob = store.join(store.createInvite(admin, admin.team_id).token, "Bob");
+      const other = store.createTeam(admin, "Other team", "other-repo");
+      const issued = await post("invites", {}, credential);
+      const old = (await issued.json()) as { token: string; advertisedUrl: string };
+      expect(old.advertisedUrl).toBe("https://first.example.com");
+      const path = "team/advertised-url";
+      const url = "https://new.example.com:8443/setup?x=y#ignored";
+      expect((await post(path, { url })).status).toBe(401);
+      expect((await post(path, { url }, bob.credential)).status).toBe(403);
+      expect((await post(path, { url: "http://localhost:8080" }, credential)).status).toBe(400);
+      expect((await post(path, { url }, credential)).status).toBe(200);
+      const current = await post("invites", {}, credential);
+      expect(await current.json()).toMatchObject({ advertisedUrl: "https://new.example.com:8443" });
+      expect(store.snapshot(admin, new Set()).team.advertisedUrl).toBe(
+        "https://new.example.com:8443",
+      );
+      expect(
+        store.snapshot(store.authenticate(bob.credential), new Set()).team.advertisedUrl,
+      ).toBeUndefined();
+      expect(
+        store.snapshot(store.authenticate(other.credential), new Set()).team.advertisedUrl,
+      ).toBeNull();
+      expect(store.join(old.token, "Charlie").teamId).toBe(admin.team_id);
+    } finally {
+      await server.close();
+      store.close();
+    }
+    const reopened = new HubStore(dir);
+    try {
+      const persisted = reopened.db
+        .prepare("SELECT advertised_url FROM team_advertised_urls")
+        .get();
+      expect(persisted).toMatchObject({ advertised_url: "https://new.example.com:8443" });
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("allows only the team's owner to delete it and disconnects its teammates", async () => {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-team-hub-delete-"));
     dirs.push(dir);

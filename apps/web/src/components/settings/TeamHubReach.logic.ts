@@ -1,4 +1,5 @@
 import {
+  normalizeTeamHubAdvertisedUrl,
   teamHubDockerRunArgs,
   type TeamHubExposure,
   type TeamHubNetworkBlockedReason,
@@ -161,13 +162,9 @@ export function servePortOfUrl(url: string): number {
  */
 export function normalizeHubAddress(input: string): string | null {
   const text = input.trim();
-  if (text.length === 0) return null;
-  try {
-    const parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(text) ? text : `https://${text}`);
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.origin : null;
-  } catch {
-    return null;
-  }
+  return normalizeTeamHubAdvertisedUrl(
+    /^[a-z][a-z\d+.-]*:\/\//i.test(text) ? text : `https://${text}`,
+  );
 }
 
 /** Only these names can be a Tailscale share, so only these are worth asking Tailscale about. */

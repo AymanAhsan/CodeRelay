@@ -12,16 +12,18 @@ import {
   teamHubTaskTurn,
   teamHubCloneRemote,
   teamHubActionErrorMessage,
+  teamHubInviteLink,
+  teamHubInviteOrigin,
   withTeamHubOrigin,
   type TeamHubAction,
 } from "@t3tools/client-runtime/state/team-hub";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { TeamHubInvite, TeamHubStartInput } from "@t3tools/contracts/teamHub";
-import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import type { TeamHubInvite } from "@t3tools/contracts/teamHub";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { TriangleAlertIcon } from "lucide-react";
 import { ensureLocalApi } from "../../localApi";
@@ -30,6 +32,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { connectionAtomRuntime } from "~/connection/runtime";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useProjects } from "~/state/entities";
@@ -50,14 +53,22 @@ import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { HubAddressRow, HubConnectionCheck, HubLinkCheck, HubSharing } from "./TeamHubReach";
 import { TeamHubAreaPicker } from "./TeamHubAreaPicker";
+import {
+  advertisedTeamHubOrigin,
+  canLinkTeamHubRepository,
+  DEFAULT_TEAM_HUB_SETUP,
+  TeamHubSetupDraft,
+  teamHubSetupStage,
+  type LocalTeamHubSetup,
+} from "./teamHubSetup";
 
 // Most areas a member can publish; the hub keeps only this many.
 const MAX_AREAS = 20;
 
-type HubReach = "public" | "private" | "other";
+const SavedTeamHubSetup = Schema.NullOr(TeamHubSetupDraft);
 
 const HUB_REACH_OPTIONS: ReadonlyArray<{
-  readonly value: HubReach;
+  readonly value: TeamHubSetupDraft["reach"];
   readonly title: string;
   readonly description: string;
 }> = [
@@ -77,23 +88,6 @@ const HUB_REACH_OPTIONS: ReadonlyArray<{
     description: "A LAN address, your own domain, or a tunnel you already run.",
   },
 ];
-
-function inviteLink(url: string, invite: TeamHubInvite): string {
-  const link = new URL("/join", url);
-  link.hash = `token=${encodeURIComponent(invite.token)}`;
-  return link.toString();
-}
-
-// Invite links reuse the address this hub was set up with, so a loopback address only works
-// on the admin's own machine.
-function isLoopbackAddress(url: string): boolean {
-  try {
-    const host = new URL(url).hostname;
-    return isLocalLoopbackHost(host) || host.endsWith(".localhost");
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Bordered list inside a settings row, the same container the browser profiles use. Items are
@@ -125,18 +119,23 @@ function HubListItem({
 function AdminInvites({
   prepared,
   url,
+  advertisedUrl,
   invite,
   busy,
   onCreate,
   onRevoke,
+  onUpdateAddress,
 }: {
   prepared: PreparedConnection;
   url: string;
+  advertisedUrl: string | null | undefined;
   invite: TeamHubInvite | null;
   busy: boolean;
   onCreate: () => void;
   onRevoke: (inviteId: string) => void;
+  onUpdateAddress: (url: string) => Promise<boolean>;
 }) {
+  const [addressDraft, setAddressDraft] = useState<string | null>(null);
   const query = useMemo(
     () =>
       connectionAtomRuntime
@@ -153,35 +152,98 @@ function AdminInvites({
     return () => clearInterval(timer);
   }, [query]);
   const open = invites.filter((item) => !item.usedAt && !item.revokedAt);
-  const loopback = isLoopbackAddress(url);
+  const inviteOrigin = teamHubInviteOrigin(url, advertisedUrl);
+  const nextOrigin = addressDraft === null ? null : advertisedTeamHubOrigin(addressDraft);
+  const link = invite === null ? null : teamHubInviteLink(url, invite);
   return (
     <>
       <HubAddressRow prepared={prepared} url={url} />
+      <SettingsRow
+        title="Invite address"
+        description={inviteOrigin ?? "Set a hub address teammates can reach."}
+        control={
+          advertisedUrl !== undefined && addressDraft === null ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setAddressDraft(inviteOrigin ?? "")}
+            >
+              Edit address
+            </Button>
+          ) : null
+        }
+      >
+        {addressDraft !== null && (
+          <form
+            className="space-y-2 py-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (nextOrigin === null || busy) return;
+              void onUpdateAddress(nextOrigin).then((saved) => {
+                if (saved) setAddressDraft(null);
+              });
+            }}
+          >
+            <Input
+              size="sm"
+              aria-label="Advertised hub address"
+              placeholder="https://hub.example.com"
+              onChange={(event) => setAddressDraft(event.target.value)}
+              value={addressDraft}
+              disabled={busy}
+            />
+            <p className="text-xs text-muted-foreground">
+              New invites use this address. Existing invite links keep their old address, and
+              existing members keep their connections.
+            </p>
+            <div className="flex gap-2">
+              <Button type="submit" size="sm" disabled={busy || nextOrigin === null}>
+                Save address
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setAddressDraft(null)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+      </SettingsRow>
       <SettingsRow
         id={TEAM_HUB_INVITES_ID}
         title="Invites"
         description="Create a link a teammate opens to join this team."
         control={
-          <Button size="sm" variant="outline" disabled={busy} onClick={onCreate}>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || inviteOrigin === null}
+            onClick={onCreate}
+          >
             Create invite
           </Button>
         }
       >
-        {loopback || invite || open.length > 0 ? (
+        {inviteOrigin === null || link !== null ? (
           <div className="space-y-2 pt-2 pb-1">
-            {loopback && (
+            {inviteOrigin === null && (
               <Alert variant="warning">
                 <TriangleAlertIcon />
                 <AlertDescription>
                   <p>
-                    This hub's address is {new URL(url).host}, which only works on this computer.
-                    Teammates can't use invites from it. Set the hub up again from a link with an
-                    address they can reach.
+                    {advertisedUrl === undefined
+                      ? "Update this hub to set an invite address your teammates can reach."
+                      : "Set an invite address your teammates can reach. Localhost works only on this computer."}
                   </p>
                 </AlertDescription>
               </Alert>
             )}
-            {invite && (
+            {invite && link !== null && (
               <div className="space-y-1.5">
                 <p className="text-xs text-muted-foreground">
                   New invite, expires {new Date(invite.expiresAt).toLocaleString()}.
@@ -191,7 +253,7 @@ function AdminInvites({
                   font="mono"
                   aria-label="Invite link"
                   readOnly
-                  value={inviteLink(url, invite)}
+                  value={link}
                   onFocus={(event) => event.target.select()}
                 />
               </div>
@@ -235,11 +297,16 @@ function ConnectedTeamHub({
   const result = useAtomValue(query);
   const state = Option.getOrNull(AsyncResult.value(result));
   const [joinLink, setJoinLink] = useState("");
-  const prefillSetupLink = useCallback((link: string) => {
-    setJoinLink((current) => (current.trim() ? current : link));
-  }, []);
   const [displayName, setDisplayName] = useState("");
   const [settingUp, setSettingUp] = useState(initialMode === "setup");
+  const [savedSetup, setSavedSetup] = useLocalStorage(
+    `t3code:team-hub-setup:v1:${prepared.environmentId}`,
+    null,
+    SavedTeamHubSetup,
+  );
+  const [showResume, setShowResume] = useState(() => savedSetup !== null);
+  const draft = savedSetup ?? DEFAULT_TEAM_HUB_SETUP;
+  const { reach } = draft;
   const [teamName, setTeamName] = useState("");
   const [repo, setRepo] = useState("");
   const [editingRepo, setEditingRepo] = useState(false);
@@ -255,14 +322,58 @@ function ConnectedTeamHub({
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reach, setReach] = useState<HubReach>("public");
   // The address the shared hub answers on, once it does. Setup uses it in place of
   // whatever address the setup link printed.
   const [shareAddress, setShareAddress] = useState<string | null>(null);
-  const [localHub, setLocalHub] = useState<TeamHubStartInput | null>(null);
-  const parsedLink = useMemo(() => parseTeamHubLink(joinLink), [joinLink]);
+  const [localSetup, setLocalSetup] = useState<LocalTeamHubSetup>({ status: "checking" });
+  const [manualAddress, setManualAddress] = useState("");
+  const updateDraft = useCallback(
+    (patch: Partial<TeamHubSetupDraft>) => {
+      if (
+        Object.entries(patch).every(
+          ([key, value]) => draft[key as keyof TeamHubSetupDraft] === value,
+        )
+      )
+        return;
+      if (
+        (patch.hubPort !== undefined && patch.hubPort !== draft.hubPort) ||
+        (patch.name !== undefined && patch.name !== draft.name)
+      ) {
+        setLocalSetup({ status: "checking" });
+      }
+      if (
+        (patch.hubPort !== undefined && patch.hubPort !== draft.hubPort) ||
+        (patch.servePort !== undefined && patch.servePort !== draft.servePort) ||
+        (patch.reach !== undefined && patch.reach !== draft.reach)
+      )
+        setShareAddress(null);
+      setSavedSetup((current) => ({ ...(current ?? DEFAULT_TEAM_HUB_SETUP), ...patch }));
+    },
+    [draft, setSavedSetup],
+  );
+  const setupLink = localSetup.status === "pending" ? localSetup.setupLink : null;
   const sharing = settingUp && reach !== "other";
+  const parsedLink = useMemo(
+    () => parseTeamHubLink(sharing ? (setupLink ?? "") : joinLink),
+    [sharing, setupLink, joinLink],
+  );
+  const stage =
+    reach === "other"
+      ? "team"
+      : teamHubSetupStage({
+          localSetup: localSetup.status,
+          advertisedAddress: shareAddress,
+        });
   const command = useAtomCommand(teamHubActionCommand, { reportFailure: false });
+
+  const enrolled = state?.url != null;
+  useEffect(() => {
+    if (enrolled && savedSetup !== null) {
+      setSavedSetup(null);
+    } else if (state?.url === null && settingUp && savedSetup === null) {
+      setSavedSetup(DEFAULT_TEAM_HUB_SETUP);
+    }
+  }, [enrolled, savedSetup, setSavedSetup, settingUp, state?.url]);
 
   const act = async (action: TeamHubAction) => {
     setBusy(true);
@@ -270,6 +381,14 @@ function ConnectedTeamHub({
     const outcome = await command({ prepared, action });
     setBusy(false);
     if (AsyncResult.isSuccess(outcome)) {
+      if (
+        action.type === "bootstrap" ||
+        action.type === "retryBootstrap" ||
+        action.type === "join"
+      ) {
+        setJoinLink("");
+        setShowResume(false);
+      }
       if (action.type === "updateRepo") setEditingRepo(false);
       if (action.type === "publish" && action.input.type === "set_domains") setEditingAreas(false);
       if (action.type === "invite") setInvite(outcome.value as TeamHubInvite);
@@ -286,8 +405,10 @@ function ConnectedTeamHub({
           ),
         });
       }
+      return true;
     } else {
       setError(teamHubActionErrorMessage(squashAtomCommandFailure(outcome)));
+      return false;
     }
   };
 
@@ -309,34 +430,27 @@ function ConnectedTeamHub({
     snapshot?.members.find((member) => member.id === memberId)?.name ?? "Teammate";
 
   const submit = () => {
-    if (sharing && localHub !== null && shareAddress !== null) {
-      if (!displayName.trim() || !teamName.trim() || !repo.trim()) {
-        setError("Enter your name, team name, and repository.");
-        return;
-      }
-      void act({
-        type: "createLocalTeam",
-        input: {
-          ...localHub,
-          url: shareAddress,
-          displayName: displayName.trim(),
-          teamName: teamName.trim(),
-          repo: repo.trim(),
-        },
-      });
-      return;
-    }
+    if (busy || (settingUp && stage !== "team")) return;
     if (!parsedLink || !displayName.trim() || (settingUp && (!teamName.trim() || !repo.trim()))) {
       setError("Enter a valid hub link and all required fields.");
       return;
     }
-    const target = sharing
-      ? shareAddress === null
+    const address = settingUp
+      ? advertisedTeamHubOrigin((sharing ? shareAddress : manualAddress.trim()) || parsedLink.url)
+      : null;
+    const target = settingUp
+      ? address === null
         ? null
-        : withTeamHubOrigin(parsedLink, shareAddress)
+        : withTeamHubOrigin(parsedLink, address)
       : parsedLink;
     if (target === null) {
-      setError("Share the hub over Tailscale first, or choose another address.");
+      setError("Enter the address teammates will use. Localhost only works on this computer.");
+      return;
+    }
+    if (settingUp && !canLinkTeamHubRepository(repo)) {
+      setError(
+        "Enter a Git remote URL without embedded credentials, query parameters, or fragments.",
+      );
       return;
     }
     void act(
@@ -360,34 +474,105 @@ function ConnectedTeamHub({
     </div>
   ) : null;
 
+  const retrySetupRow = state.hasPendingBootstrap ? (
+    <SettingsRow
+      title="Finish submitted setup"
+      description="CodeRelay saved this setup securely. Once the hub is reachable, retry to finish creating or connecting to the team."
+      control={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void act({ type: "retryBootstrap" })}
+        >
+          Retry team setup
+        </Button>
+      }
+    />
+  ) : null;
+
   if (state.url === null) {
+    if (savedSetup !== null && showResume) {
+      return (
+        <>
+          {retrySetupRow}
+          <SettingsRow
+            title="Continue setting up your team?"
+            description="CodeRelay saved your hosting choices. Continue to check which steps still need attention."
+            control={
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSavedSetup(null);
+                    setShowResume(false);
+                    setSettingUp(false);
+                  }}
+                >
+                  Discard setup draft
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setSettingUp(true);
+                    setShowResume(false);
+                  }}
+                >
+                  Continue setup
+                </Button>
+              </div>
+            }
+          />
+          {errorRow}
+        </>
+      );
+    }
     return (
       <>
+        {retrySetupRow}
         <SettingsRow
           title={settingUp ? "Set up a hub" : "Join a team"}
           description={
             settingUp
-              ? "Create a new team on your hub. Existing teams are kept."
+              ? "Start a hub, choose how teammates reach it, and create its first team."
               : "Join a team with the invite link from its admin."
           }
           control={
             <Button
               size="sm"
               variant="outline"
+              disabled={busy}
               onClick={() => {
+                if (!settingUp && savedSetup === null) setSavedSetup(DEFAULT_TEAM_HUB_SETUP);
+                if (settingUp && savedSetup !== null) setShowResume(true);
                 setSettingUp(!settingUp);
                 setShareAddress(null);
+                setLocalSetup({ status: "checking" });
+                setJoinLink("");
                 setError(null);
               }}
             >
-              {settingUp ? "Join a team instead" : "Set up a hub"}
+              {settingUp && savedSetup !== null
+                ? "Pause setup"
+                : settingUp
+                  ? "Join a team instead"
+                  : "Set up a hub"}
             </Button>
           }
         />
         {settingUp && (
           <SettingsRow
-            title="How teammates reach the hub"
-            description="Pick how the hub is shared. Sharing over Tailscale starts here."
+            title={stage === "deploy" ? "Start your hub" : "How teammates reach the hub"}
+            description={
+              stage === "already-initialized"
+                ? "This hub already has a team. Ask an administrator for an invite to join it."
+                : stage === "deploy"
+                  ? "Step 1 of 3. Start the hub."
+                  : stage === "network"
+                    ? "Step 2 of 3. Choose how teammates connect."
+                    : "Step 3 of 3. Create your team."
+            }
           >
             <div className="space-y-3 pt-3 pb-2">
               <RadioGroup
@@ -395,9 +580,10 @@ function ConnectedTeamHub({
                 value={reach}
                 onValueChange={(value) => {
                   if (value === "public" || value === "private" || value === "other") {
-                    setReach(value);
-                    setShareAddress(null);
-                    setLocalHub(null);
+                    if (value === reach) return;
+                    updateDraft({ reach: value });
+                    setLocalSetup({ status: "checking" });
+                    setJoinLink("");
                   }
                 }}
               >
@@ -418,9 +604,11 @@ function ConnectedTeamHub({
                   key={reach}
                   prepared={prepared}
                   exposure={reach}
+                  draft={draft}
+                  setupStatus={localSetup.status}
+                  onDraft={updateDraft}
                   onAddress={setShareAddress}
-                  onSetupLink={prefillSetupLink}
-                  onLocalHub={setLocalHub}
+                  onSetupState={setLocalSetup}
                 />
               )}
             </div>
@@ -438,7 +626,7 @@ function ConnectedTeamHub({
               type="submit"
               form="team-hub-form"
               size="sm"
-              disabled={busy || (sharing && shareAddress === null)}
+              disabled={busy || (settingUp && stage !== "team")}
             >
               {settingUp ? "Create team" : "Join team"}
             </Button>
@@ -452,14 +640,17 @@ function ConnectedTeamHub({
               submit();
             }}
           >
-            {sharing && localHub !== null ? (
+            {sharing ? (
               <p className="text-xs text-muted-foreground">
-                Your hub is ready. Create a new team here without a setup link.
+                {stage === "team"
+                  ? `Teammates will use ${shareAddress}.`
+                  : "Start and share your hub to create a team."}
               </p>
             ) : (
               <Input
                 size="sm"
                 aria-label={settingUp ? "Hub setup link" : "Team invite link"}
+                autoComplete="off"
                 placeholder={
                   settingUp
                     ? "https://hub.example.com/setup#token=…"
@@ -469,10 +660,14 @@ function ConnectedTeamHub({
                 onChange={(event) => setJoinLink(event.target.value)}
               />
             )}
-            {sharing && localHub === null && shareAddress !== null && parsedLink !== null && (
-              <p className="text-xs text-muted-foreground">
-                Teammates will use {shareAddress}, not {parsedLink.url}.
-              </p>
+            {settingUp && !sharing && (
+              <Input
+                size="sm"
+                aria-label="Address teammates will use"
+                placeholder="Address teammates will use (if different from the setup link)"
+                value={manualAddress}
+                onChange={(event) => setManualAddress(event.target.value)}
+              />
             )}
             {!settingUp && parsedLink !== null && (
               <HubLinkCheck prepared={prepared} url={parsedLink.url} />
@@ -871,10 +1066,12 @@ function ConnectedTeamHub({
             <AdminInvites
               prepared={prepared}
               url={state.url}
+              advertisedUrl={snapshot.team.advertisedUrl}
               invite={invite}
               busy={busy}
               onCreate={() => void act({ type: "invite" })}
               onRevoke={(inviteId) => void act({ type: "revokeInvite", inviteId })}
+              onUpdateAddress={(url) => act({ type: "updateAdvertisedUrl", url })}
             />
           )}
           <SettingsRow
@@ -1174,7 +1371,11 @@ export function TeamHubSettings({ initialMode = "join" }: { initialMode?: TeamHu
   return (
     <SettingsSection id="team-hub" title="Team hub" hideTitle>
       {Option.isSome(prepared) ? (
-        <ConnectedTeamHub prepared={prepared.value} initialMode={initialMode} />
+        <ConnectedTeamHub
+          key={prepared.value.environmentId}
+          prepared={prepared.value}
+          initialMode={initialMode}
+        />
       ) : (
         <SettingsRow
           title="No environment"

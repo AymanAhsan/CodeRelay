@@ -1,8 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off - The test owns an isolated hub database and loopback server.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Tests use an isolated hub database and can drop its actual HTTP response.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,7 +18,124 @@ import * as ServerSettings from "../serverSettings.ts";
 import { TeamHubService, layer } from "./TeamHubService.ts";
 import * as TeamHubDocker from "./TeamHubDocker.ts";
 
+const testSecretLayer = (secrets: Map<string, Uint8Array>) =>
+  Layer.succeed(
+    ServerSecretStore.ServerSecretStore,
+    ServerSecretStore.ServerSecretStore.of({
+      get: (key) => Effect.sync(() => Option.fromUndefinedOr(secrets.get(key))),
+      set: (key, value) =>
+        Effect.sync(() => {
+          secrets.set(key, value);
+        }),
+      create: (key, value) =>
+        Effect.sync(() => {
+          expect(secrets.has(key)).toBe(false);
+          secrets.set(key, value);
+        }),
+      remove: (key) =>
+        Effect.sync(() => {
+          if (key.startsWith("team-hub-bootstrap-") || key === "team-hub-pending-bootstrap") {
+            expect(secrets.has("team-hub-membership")).toBe(true);
+          }
+          secrets.delete(key);
+        }),
+      getOrCreateRandom: () => Effect.die("unused"),
+    }),
+  );
+
 describe("local team hub connector", () => {
+  it.effect(
+    "recovers a committed bootstrap after restart and retries when startup recovery is offline",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const dir = NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-team-hub-bootstrap-retry-"),
+          );
+          const store = new HubStore(dir);
+          const server = yield* Effect.promise(() =>
+            createHubServer(store, { host: "127.0.0.1", port: 0 }),
+          );
+          const originalFetch = globalThis.fetch;
+          const startupAttempted = Promise.withResolvers<void>();
+          let attempts = 0;
+          let originalCredential: string | null = null;
+          const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(async (input, init) => {
+              if (!String(input).endsWith("/api/bootstrap")) return originalFetch(input, init);
+              attempts += 1;
+              if (attempts === 2) {
+                startupAttempted.resolve();
+                throw new TypeError("Hub temporarily unreachable");
+              }
+              const response = await originalFetch(input, init);
+              if (attempts === 1) {
+                expect(response.status).toBe(201);
+                originalCredential = ((await response.json()) as { credential: string }).credential;
+                throw new TypeError("Bootstrap response was lost");
+              }
+              return response;
+            });
+          yield* Effect.addFinalizer(() =>
+            Effect.promise(async () => {
+              fetchMock.mockRestore();
+              await server.close();
+              store.close();
+              NodeFS.rmSync(dir, { recursive: true, force: true });
+            }),
+          );
+          const secrets = new Map<string, Uint8Array>();
+          const connector = layer.pipe(
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(testSecretLayer(secrets)),
+            Layer.provide(Layer.mock(TeamHubDocker.TeamHubDocker)({})),
+          );
+          const pendingInput = {
+            url: `http://127.0.0.1:${server.port}`,
+            token: store.setupToken!,
+            teamName: "Engineering",
+            repo: "https://github.com/example/repo",
+            displayName: "Alice",
+          };
+          yield* Effect.gen(function* () {
+            const hub = yield* TeamHubService;
+            expect((yield* hub.bootstrap(pendingInput).pipe(Effect.flip)).message).toContain(
+              "Could not create",
+            );
+            expect((yield* hub.state).hasPendingBootstrap).toBe(true);
+            expect(secrets.has("team-hub-membership")).toBe(false);
+            expect(secrets.has("team-hub-pending-bootstrap")).toBe(true);
+            expect(
+              (yield* hub
+                .bootstrap({ ...pendingInput, teamName: "Other details" })
+                .pipe(Effect.flip)).message,
+            ).toContain("original team details");
+            expect(attempts).toBe(1);
+          }).pipe(Effect.provide(connector), Effect.scoped);
+
+          yield* Effect.gen(function* () {
+            const hub = yield* TeamHubService;
+            yield* Effect.promise(() => startupAttempted.promise);
+            expect((yield* hub.state).hasPendingBootstrap).toBe(true);
+            yield* hub.retryBootstrap;
+            const connected = yield* hub.stream.pipe(
+              Stream.filter((state) => state.status === "connected"),
+              Stream.runHead,
+            );
+            const saved = new TextDecoder().decode(secrets.get("team-hub-membership"));
+            expect(saved).toBe(originalCredential);
+            expect(Option.getOrThrow(connected).snapshot?.selfId).toBe(
+              store.authenticate(saved).id,
+            );
+            expect((yield* hub.state).hasPendingBootstrap).toBeUndefined();
+            expect([...secrets.keys()]).toEqual(["team-hub-membership"]);
+            expect(attempts).toBe(3);
+          }).pipe(Effect.provide(connector), Effect.scoped);
+        }),
+      ),
+  );
+
   it.effect("bootstraps through the local service, stores membership, and posts a note", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -54,22 +172,7 @@ describe("local team hub connector", () => {
           }),
         );
         const secrets = new Map<string, Uint8Array>();
-        const secretLayer = Layer.succeed(
-          ServerSecretStore.ServerSecretStore,
-          ServerSecretStore.ServerSecretStore.of({
-            get: (key) => Effect.sync(() => Option.fromUndefinedOr(secrets.get(key))),
-            set: (key, value) =>
-              Effect.sync(() => {
-                secrets.set(key, value);
-              }),
-            remove: (key) =>
-              Effect.sync(() => {
-                secrets.delete(key);
-              }),
-            create: () => Effect.die("unused"),
-            getOrCreateRandom: () => Effect.die("unused"),
-          }),
-        );
+        const secretLayer = testSecretLayer(secrets);
         yield* Effect.gen(function* () {
           const hub = yield* TeamHubService;
           const updates = yield* Queue.unbounded<TeamHubState>();
@@ -89,12 +192,15 @@ describe("local team hub connector", () => {
               Stream.runHead,
               Effect.map(Option.getOrThrow),
             );
-          yield* hub.bootstrap({
+          const input = {
             url: `http://127.0.0.1:${server.port}`,
             token: store.setupToken!,
             teamName: "Engineering",
             repo: "github.com/example/repo",
             displayName: "Alice",
+          };
+          yield* Effect.all([hub.bootstrap(input), hub.bootstrap(input)], {
+            concurrency: "unbounded",
           });
           const credential = new TextDecoder().decode(secrets.get("team-hub-membership"));
           const member = store.authenticate(credential);

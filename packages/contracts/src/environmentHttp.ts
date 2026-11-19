@@ -73,6 +73,7 @@ import {
   TeamHubSetupLinkResult,
   TeamHubCreateLocalTeamInput,
   TeamHubUpdateRepoInput,
+  TeamHubUpdateAdvertisedUrlInput,
   TeamHubRevokeInviteInput,
   TeamHubState,
   TeamHubTaskDecisionInput,
@@ -635,6 +636,13 @@ class EnvironmentTeamHubHttpApi extends HttpApiGroup.make("teamHub")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("retryBootstrap", "/api/team-hub/retry-bootstrap", {
+      headers: OptionalBearerHeaders,
+      success: TeamHubState,
+      error: EnvironmentTeamHubErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("join", "/api/team-hub/join", {
       headers: OptionalBearerHeaders,
       payload: TeamHubJoinInput,
@@ -691,6 +699,14 @@ class EnvironmentTeamHubHttpApi extends HttpApiGroup.make("teamHub")
     HttpApiEndpoint.post("updateRepo", "/api/team-hub/update-repo", {
       headers: OptionalBearerHeaders,
       payload: TeamHubUpdateRepoInput,
+      success: TeamHubState,
+      error: EnvironmentTeamHubErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updateAdvertisedUrl", "/api/team-hub/update-advertised-url", {
+      headers: OptionalBearerHeaders,
+      payload: TeamHubUpdateAdvertisedUrlInput,
       success: TeamHubState,
       error: EnvironmentTeamHubErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

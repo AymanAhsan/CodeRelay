@@ -1,10 +1,11 @@
-// @effect-diagnostics globalFetchInEffect:off globalTimers:off preferSchemaOverJson:off - The hub connector owns the native WebSocket and its companion HTTP requests.
+// @effect-diagnostics globalFetchInEffect:off globalTimers:off nodeBuiltinImport:off preferSchemaOverJson:off - The hub connector owns the native WebSocket, companion HTTP requests, and bootstrap operation secrets.
+import * as NodeCrypto from "node:crypto";
 import type {
   TeamHubActivity,
-  TeamHubBootstrapInput,
   TeamHubCreateLocalTeamInput,
   TeamHubClientMessage,
   TeamHubInviteRecord,
+  TeamHubInvite,
   TeamHubJoinInput,
   TeamHubRepoAccess,
   TeamHubState,
@@ -12,6 +13,8 @@ import type {
 import type { ThreadId } from "@t3tools/contracts";
 import {
   TEAM_HUB_PROTOCOL_VERSION,
+  TeamHubBootstrapInput,
+  normalizeTeamHubAdvertisedUrl,
   TeamHubSnapshot as TeamHubSnapshotSchema,
 } from "@t3tools/contracts/teamHub";
 import * as Context from "effect/Context";
@@ -19,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -27,9 +31,35 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TeamHubDocker from "./TeamHubDocker.ts";
 
 const CREDENTIAL_NAME = "team-hub-membership";
+const ACTIVE_BOOTSTRAP_NAME = "team-hub-pending-bootstrap";
+const BOOTSTRAP_RECORD_PREFIX = "team-hub-bootstrap-";
+const BOOTSTRAP_RECORD_KEY = /^team-hub-bootstrap-[0-9a-f]{64}$/;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const decodeSnapshot = Schema.decodeUnknownSync(TeamHubSnapshotSchema);
+const PendingBootstrap = Schema.Struct({
+  input: TeamHubBootstrapInput,
+  operationSecret: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]{43}$/)),
+});
+type PendingBootstrap = typeof PendingBootstrap.Type;
+const pendingBootstrapJson = Schema.fromJsonString(PendingBootstrap);
+
+const bootstrapKey = (input: TeamHubBootstrapInput) =>
+  BOOTSTRAP_RECORD_PREFIX +
+  NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([input.url, input.token]))
+    .digest("hex");
+
+const sameBootstrap = (left: TeamHubBootstrapInput, right: TeamHubBootstrapInput) =>
+  left.url === right.url &&
+  left.token === right.token &&
+  left.teamName === right.teamName &&
+  left.repo === right.repo &&
+  left.displayName === right.displayName;
+const bootstrapPayload = (input: TeamHubBootstrapInput) =>
+  NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([input.teamName, input.repo, input.displayName]))
+    .digest("hex");
 
 export class TeamHubError extends Schema.TaggedError<TeamHubError>()("TeamHubError", {
   reason: Schema.String,
@@ -56,6 +86,7 @@ export class TeamHubService extends Context.Service<
       readonly displayName: string;
     }) => Effect.Effect<void, TeamHubError>;
     readonly bootstrap: (input: TeamHubBootstrapInput) => Effect.Effect<void, TeamHubError>;
+    readonly retryBootstrap: Effect.Effect<void, TeamHubError>;
     readonly createLocalTeam: (
       input: TeamHubCreateLocalTeamInput,
     ) => Effect.Effect<void, TeamHubError>;
@@ -73,13 +104,11 @@ export class TeamHubService extends Context.Service<
     readonly reportActivity: (activity: TeamHubActivity) => Effect.Effect<void>;
     /** Tells the team whether this machine can open the team repository. Unchanged reports are dropped. */
     readonly reportRepoAccess: (access: TeamHubRepoAccess) => Effect.Effect<void>;
-    readonly createInvite: Effect.Effect<
-      { id: string; token: string; expiresAt: number },
-      TeamHubError
-    >;
+    readonly createInvite: Effect.Effect<TeamHubInvite, TeamHubError>;
     readonly listInvites: Effect.Effect<ReadonlyArray<TeamHubInviteRecord>, TeamHubError>;
     readonly revokeInvite: (inviteId: string) => Effect.Effect<void, TeamHubError>;
     readonly updateRepo: (repo: string) => Effect.Effect<void, TeamHubError>;
+    readonly updateAdvertisedUrl: (url: string) => Effect.Effect<void, TeamHubError>;
     readonly removeMember: (memberId: string) => Effect.Effect<void, TeamHubError>;
     readonly reserveAutoStart: (
       taskId: string,
@@ -103,6 +132,8 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const docker = yield* TeamHubDocker.TeamHubDocker;
+  const enrollmentLock = yield* Semaphore.make(1);
+  let completedBootstrap: { key: string; payload: string } | null = null;
   let state: TeamHubState = { url: null, status: "disconnected", snapshot: null, error: null };
   const listeners = new Set<(state: TeamHubState) => void>();
   const setState = (next: TeamHubState) => {
@@ -287,8 +318,12 @@ const make = Effect.gen(function* () {
     Effect.try({
       try: () => {
         const parsed = new URL(address);
-        if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
-          throw new Error("Invalid scheme");
+        if (
+          (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+          parsed.username ||
+          parsed.password
+        )
+          throw new Error("Invalid hub origin");
         parsed.pathname = "/";
         parsed.search = "";
         parsed.hash = "";
@@ -316,42 +351,177 @@ const make = Effect.gen(function* () {
         ),
       );
     disconnect();
+    completedBootstrap = null;
     credential = result;
     setState({ url: url.toString(), status: "disconnected", snapshot: null, error: null });
     connect();
   });
 
-  const enroll = (input: TeamHubJoinInput | TeamHubBootstrapInput) =>
-    Effect.gen(function* () {
-      const url = yield* normalizeUrl(input.url);
-      const result = yield* Effect.tryPromise({
-        try: async () => {
-          const response = await fetch(
-            new URL("teamName" in input ? "/api/bootstrap" : "/api/join", url),
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify(input),
-            },
-          );
-          const data: unknown = await response.json();
-          if (
-            !response.ok ||
-            !data ||
-            typeof data !== "object" ||
-            !("credential" in data) ||
-            typeof data.credential !== "string"
-          )
-            throw new Error("Team hub enrollment was rejected");
-          return data.credential;
-        },
-        catch: (cause) => new TeamHubError({ reason: "Could not join team hub", cause }),
-      });
-      yield* saveMembership(url, result);
+  const enroll = (
+    url: URL,
+    endpoint: "/api/join" | "/api/bootstrap",
+    payload:
+      | TeamHubJoinInput
+      | (TeamHubBootstrapInput & {
+          readonly operationSecret: string;
+          readonly advertisedUrl?: string;
+        }),
+  ) =>
+    Effect.tryPromise({
+      try: async (signal) => {
+        const response = await fetch(new URL(endpoint, url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+          redirect: "error",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+        });
+        const data: unknown = await response.json();
+        if (
+          !response.ok ||
+          !data ||
+          typeof data !== "object" ||
+          !("credential" in data) ||
+          typeof data.credential !== "string"
+        )
+          throw new Error("Team hub enrollment was rejected");
+        return data.credential;
+      },
+      catch: () =>
+        new TeamHubError({
+          reason:
+            endpoint === "/api/bootstrap"
+              ? "Could not create team on the hub"
+              : "Could not join team hub",
+          cause: null,
+        }),
     });
+
+  const pendingError = () =>
+    new TeamHubError({ reason: "Cannot save or read the pending team setup", cause: null });
+
+  const readPendingBootstrap = (key: string) =>
+    Effect.gen(function* () {
+      const saved = yield* secrets.get(key).pipe(Effect.mapError(pendingError));
+      if (Option.isNone(saved)) return null;
+      const record = yield* Schema.decodeEffect(pendingBootstrapJson)(
+        decoder.decode(saved.value),
+      ).pipe(Effect.mapError(pendingError));
+      if (bootstrapKey(record.input) !== key) return yield* pendingError();
+      return record;
+    });
+
+  const readActiveBootstrapKey = Effect.gen(function* () {
+    const saved = yield* secrets.get(ACTIVE_BOOTSTRAP_NAME).pipe(Effect.mapError(pendingError));
+    if (Option.isNone(saved)) return null;
+    const key = decoder.decode(saved.value);
+    if (!BOOTSTRAP_RECORD_KEY.test(key)) return yield* pendingError();
+    return key;
+  });
+
+  const cleanUpBootstrap = (key: string) =>
+    Effect.gen(function* () {
+      if ((yield* readActiveBootstrapKey) === key) {
+        yield* secrets.remove(ACTIVE_BOOTSTRAP_NAME);
+      }
+      yield* secrets.remove(key);
+    }).pipe(Effect.ignore);
+
+  const finishBootstrap = (key: string, pending: PendingBootstrap, url: URL) =>
+    Effect.gen(function* () {
+      const advertisedUrl = normalizeTeamHubAdvertisedUrl(url.origin);
+      const result = yield* enroll(url, "/api/bootstrap", {
+        ...pending.input,
+        operationSecret: pending.operationSecret,
+        ...(advertisedUrl === null ? {} : { advertisedUrl }),
+      });
+      if (credential !== null && state.url !== null && credential !== result) {
+        return yield* new TeamHubError({
+          reason: "This CodeRelay environment is already joined to a team",
+          cause: null,
+        });
+      }
+      yield* saveMembership(url, result);
+      completedBootstrap = { key, payload: bootstrapPayload(pending.input) };
+      yield* cleanUpBootstrap(key);
+    });
+
+  const bootstrap = (input: TeamHubBootstrapInput) =>
+    enrollmentLock.withPermits(1)(
+      Effect.gen(function* () {
+        const url = yield* normalizeUrl(input.url);
+        const normalized = {
+          url: url.origin,
+          token: input.token.trim(),
+          teamName: input.teamName.trim(),
+          repo: input.repo.trim(),
+          displayName: input.displayName.trim(),
+        };
+        const key = bootstrapKey(normalized);
+        if (credential !== null && state.url !== null) {
+          if (
+            completedBootstrap?.key === key &&
+            completedBootstrap.payload === bootstrapPayload(normalized)
+          )
+            return;
+          return yield* new TeamHubError({
+            reason: "This CodeRelay environment is already joined to a team",
+            cause: null,
+          });
+        }
+        let pending = yield* readPendingBootstrap(key);
+        if (pending === null) {
+          const record = {
+            input: normalized,
+            operationSecret: NodeCrypto.randomBytes(32).toString("base64url"),
+          };
+          const data = yield* Schema.encodeEffect(pendingBootstrapJson)(record).pipe(
+            Effect.mapError(pendingError),
+          );
+          pending = yield* secrets.create(key, encoder.encode(data)).pipe(
+            Effect.as(record),
+            Effect.catch((cause) =>
+              ServerSecretStore.isSecretAlreadyExistsError(cause)
+                ? readPendingBootstrap(key)
+                : Effect.fail(pendingError()),
+            ),
+          );
+        }
+        if (pending === null) return yield* pendingError();
+        if (!sameBootstrap(pending.input, normalized)) {
+          return yield* new TeamHubError({
+            reason: "Retry setup using the original team details",
+            cause: null,
+          });
+        }
+        yield* secrets
+          .set(ACTIVE_BOOTSTRAP_NAME, encoder.encode(key))
+          .pipe(Effect.mapError(pendingError));
+        setState({ ...state, hasPendingBootstrap: true });
+        yield* finishBootstrap(key, pending, url);
+      }),
+    );
+
+  const resumeBootstrap = enrollmentLock.withPermits(1)(
+    Effect.gen(function* () {
+      const key = yield* readActiveBootstrapKey;
+      if (key === null) return;
+      const pending = yield* readPendingBootstrap(key);
+      if (pending === null) return;
+      const url = yield* normalizeUrl(pending.input.url);
+      if (credential !== null && state.url !== null && state.url !== url.toString()) {
+        return;
+      }
+      if (state.url === null && !state.hasPendingBootstrap) {
+        setState({ ...state, hasPendingBootstrap: true });
+      }
+      yield* finishBootstrap(key, pending, url);
+    }),
+  );
 
   const leave = Effect.gen(function* () {
     disconnect();
+    completedBootstrap = null;
     credential = null;
     yield* secrets
       .remove(CREDENTIAL_NAME)
@@ -370,7 +540,7 @@ const make = Effect.gen(function* () {
     setState({ url: null, status: "disconnected", snapshot: null, error: null });
   });
 
-  return TeamHubService.of({
+  const service = TeamHubService.of({
     state: Effect.sync(() => state),
     stream,
     start,
@@ -378,8 +548,16 @@ const make = Effect.gen(function* () {
       stopped = true;
       disconnect();
     }),
-    join: enroll,
-    bootstrap: enroll,
+    join: (input) =>
+      enrollmentLock.withPermits(1)(
+        Effect.gen(function* () {
+          const url = yield* normalizeUrl(input.url);
+          const result = yield* enroll(url, "/api/join", input);
+          yield* saveMembership(url, result);
+        }),
+      ),
+    bootstrap,
+    retryBootstrap: resumeBootstrap,
     createLocalTeam: Effect.fn("TeamHubService.createLocalTeam")(function* (input) {
       const url = yield* normalizeUrl(input.url);
       const membership = yield* docker
@@ -473,6 +651,7 @@ const make = Effect.gen(function* () {
     listInvites: request("/api/invites"),
     revokeInvite: (inviteId) => request("/api/invites/revoke", { inviteId }),
     updateRepo: (repo) => request("/api/team/repo", { repo }),
+    updateAdvertisedUrl: (url) => request("/api/team/advertised-url", { url }),
     removeMember: (memberId) => request("/api/members/remove", { memberId }),
     reserveAutoStart: (taskId, token, sha) =>
       request("/api/tasks/auto-start", { taskId, token, sha }),
@@ -481,14 +660,16 @@ const make = Effect.gen(function* () {
     decideTask: (taskId, decision, threadId, autoStartToken) =>
       request("/api/tasks/decide", { taskId, decision, threadId, autoStartToken }),
   });
+  return { service, resumeBootstrap };
 });
 
 export const layer = Layer.effect(
   TeamHubService,
   Effect.gen(function* () {
-    const service = yield* make;
+    const { service, resumeBootstrap } = yield* make;
     yield* service.start;
     yield* Effect.addFinalizer(() => service.stop);
+    yield* resumeBootstrap.pipe(Effect.ignore, Effect.forkScoped);
     return service;
   }),
 );
