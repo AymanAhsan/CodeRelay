@@ -45,8 +45,6 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
-import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/Layers/resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
@@ -134,7 +132,6 @@ import {
   startManagedCloudTunnelIfOriginConfirmed,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
-import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
 import { shouldRetryCloudLink } from "./cloud/relayResponse.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import {
@@ -460,7 +457,6 @@ const TeamHubServiceLayerLive = TeamHubService.layer.pipe(
 const TeamHubNetworkLayerLive = TeamHubNetwork.layer.pipe(Layer.provide(FetchHttpClient.layer));
 
 const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
-  Layer.provide(ProviderEventIngestor.analyticsLive),
   Layer.provide(CheckpointStoreLayerLive),
   Layer.provide(GitWorkflowLayerLive),
   Layer.provide(ResourceCleanupService.live),
@@ -638,7 +634,6 @@ const RuntimeMiscDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
   Layer.provideMerge(UsageLayerLive),
   Layer.provideMerge(TraceDiagnostics.layer),
-  Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
@@ -875,14 +870,19 @@ const makeServerLayer = Layer.unwrap(
                     ),
                   }),
                   Effect.tap((recovered) =>
-                    recovered ? Effect.logInfo("CodeRelay Connect managed tunnel recovered") : Effect.void,
+                    recovered
+                      ? Effect.logInfo("CodeRelay Connect managed tunnel recovered")
+                      : Effect.void,
                   ),
                   Effect.catchCause((cause) =>
                     Cause.hasInterrupts(cause)
                       ? Effect.interrupt
-                      : Effect.logWarning("Failed to recover the CodeRelay Connect managed tunnel", {
-                          cause,
-                        }),
+                      : Effect.logWarning(
+                          "Failed to recover the CodeRelay Connect managed tunnel",
+                          {
+                            cause,
+                          },
+                        ),
                   ),
                 ),
               );
@@ -899,9 +899,9 @@ const makeServerLayer = Layer.unwrap(
             const wantsCliLink = hasCloudPublicConfig
               ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
                   Effect.catch((cause) =>
-                    Effect.logWarning("Failed to read the desired CodeRelay Connect link", { cause }).pipe(
-                      Effect.as(false),
-                    ),
+                    Effect.logWarning("Failed to read the desired CodeRelay Connect link", {
+                      cause,
+                    }).pipe(Effect.as(false)),
                   ),
                 )
               : false;
@@ -961,9 +961,12 @@ const makeServerLayer = Layer.unwrap(
               Effect.catchCause((cause) =>
                 Cause.hasInterrupts(cause)
                   ? Effect.interrupt
-                  : Effect.logWarning("Failed to register CodeRelay Connect managed tunnel recovery", {
-                      cause,
-                    }).pipe(Effect.as({ status: "unavailable" as const })),
+                  : Effect.logWarning(
+                      "Failed to register CodeRelay Connect managed tunnel recovery",
+                      {
+                        cause,
+                      },
+                    ).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
             // A host without a confirmed marker is on its first boot after the
@@ -1009,9 +1012,12 @@ const makeServerLayer = Layer.unwrap(
                     : Effect.logInfo("CodeRelay Connect desired link reconciled on startup"),
                 ),
                 Effect.catch((cause) =>
-                  Effect.logWarning("Failed to reconcile CodeRelay Connect desired link on startup", {
-                    cause,
-                  }).pipe(Effect.as(null)),
+                  Effect.logWarning(
+                    "Failed to reconcile CodeRelay Connect desired link on startup",
+                    {
+                      cause,
+                    },
+                  ).pipe(Effect.as(null)),
                 ),
               );
               if (reconciledMode === "managed") {
@@ -1062,7 +1068,6 @@ const makeServerLayer = Layer.unwrap(
         ),
       ),
       Layer.provide(activationLayer),
-      Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),
       Layer.provide(ApplicationObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),

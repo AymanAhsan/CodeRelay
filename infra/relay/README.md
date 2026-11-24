@@ -84,7 +84,7 @@ vp run --filter t3code-relay deploy
 ```
 
 The stack provisions the Cloudflare Worker and queues, managed endpoint resources, database
-connectivity, and relay tracing resources. Copy [`infra/relay/.env.example`](./.env.example) to
+connectivity, and historical Axiom resources. Copy [`infra/relay/.env.example`](./.env.example) to
 `infra/relay/.env` and fill in the deployment-specific values before deploying. Alchemy loads that
 file from the relay directory. Runtime secrets include Clerk, APNs, and optional FCM credentials. Set
 `APNS_ENABLED=false` for an Android-only development deployment without Apple credentials. Production adopts
@@ -111,7 +111,7 @@ DNS-safe sanitization as Alchemy physical resource names, so `prod` uses
 domain override.
 
 The stack's `PublishClientConfig` action ([`src/clientConfig.ts`](./src/clientConfig.ts)) writes the
-deployed relay URL and tracing configuration into the repository-root `.env`, so subsequent source
+deployed relay URL into the repository-root `.env`, so subsequent source
 builds point at the relay that was just deployed without copying values manually. It runs only when
 one of those outputs changed, and `T3CODE_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
 
@@ -164,5 +164,5 @@ and hosted web builds.
 See:
 
 - [CodeRelay Connect setup](../../docs/operations/connect-setup.md) for Clerk keys, JWT templates, and sign-up restrictions.
-- [Relay Observability](../../docs/operations/relay-observability.md) for deployment tracing and diagnostics.
+- [Relay Observability](../../docs/operations/relay-observability.md) for Worker diagnostics.
 - [CodeRelay Connect architecture](../../docs/internals/t3-connect.md) for environment linking and trust boundaries.
