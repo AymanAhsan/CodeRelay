@@ -96,7 +96,7 @@ The Android native handler must already be configured with that device and accou
 
 ### Hosted delivery
 
-The existing Alchemy deployment provisions Cloudflare Workers, delivery queues, Hyperdrive, tunnel/DNS resources, PlanetScale Postgres, and Axiom observability by default. It requires credentials for the enabled services and private Clerk configuration; the repository's public app settings do not grant deployment access. Set `APNS_ENABLED=false` in an Android-only development relay to skip Apple delivery and its credential requirements. APNs remains enabled by default.
+The existing Alchemy deployment provisions Cloudflare Workers, delivery queues, Hyperdrive, tunnel/DNS resources, and PlanetScale Postgres. The stack also manages historical Axiom resources. It requires credentials for the enabled services and private Clerk configuration; the repository's public app settings do not grant deployment access. Set `APNS_ENABLED=false` in an Android-only development relay to skip Apple delivery and its credential requirements. APNs remains enabled by default.
 
 #### Personal stage in the existing deployment accounts
 
@@ -111,7 +111,7 @@ A maintainer with access to the existing Alchemy state and deployment credential
    vp run --filter t3code-relay deploy --stage dev_ryan_android --env-file .env.android-dev
    ```
 
-4. Give the tester the deployed relay URL and matching public Clerk configuration. The deploy wrapper also writes the relay URL and public tracing configuration into that checkout's root `.env`. Rebuild the private APK with this `T3CODE_RELAY_URL`, the existing Firebase Android file, and OTA updates disabled. If using the separate development package, authorize its Clerk callback as described above.
+4. Give the tester the deployed relay URL and matching public Clerk configuration. The deploy wrapper also writes the relay URL into that checkout's root `.env`. Rebuild the private APK with this `T3CODE_RELAY_URL`, the existing Firebase Android file, and OTA updates disabled. If using the separate development package, authorize its Clerk callback as described above.
 5. Configure one isolated CodeRelay server with the same relay URL and link that test environment through the new relay. Existing production relay links do not automatically move to a personal stage. Enable activity publishing for the test environment, enable notifications on the phone, and verify a real agent turn produces a running update and completion alert while the phone is locked.
 
 The maintainer can perform deployment themselves and return only the public client configuration; the tester does not need copies of their hosting or Clerk server credentials. A fully independent deployment needs its own initial Cloudflare stack, PostgreSQL database, Firebase project, and a Clerk instance the operator can configure. Its Alchemy deployment needs PlanetScale and Axiom credentials.

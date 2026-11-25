@@ -169,9 +169,7 @@ because those builds register recovery and replace a deleted tunnel after wake.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
    legacy and are never candidates.
 3. Set `dry-run`, run a forced relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
-   `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
-   them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
-   `relay.managed_endpoint_reaper.sweep` span in Axiom.
+   `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps in the Worker logs for scheduled cleanup.
 4. Run the disposable-host canary below.
 5. Set `enabled` only after the canary recovers without a server restart.
 

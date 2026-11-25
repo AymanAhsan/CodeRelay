@@ -209,7 +209,7 @@ describe("remote environment authorization", () => {
     }),
   );
 
-  it.effect("keeps OS sentinels in telemetry but out of display metadata", () =>
+  it.effect("omits OS sentinels from session metadata and the WebSocket URL", () =>
     Effect.gen(function* () {
       const tokenResponse = () =>
         Response.json(
@@ -246,7 +246,7 @@ describe("remote environment authorization", () => {
         deviceType: "desktop",
         os: "unknown",
       });
-      expect(websocketUrl.searchParams.get("clientOs")).toBe("unknown");
+      expect(websocketUrl.searchParams.has("clientOs")).toBe(false);
     }),
   );
 
@@ -453,7 +453,7 @@ describe("remote environment authorization", () => {
     }),
   );
 
-  it.effect("mints a websocket url that targets the rpc route with a short-lived ticket", () =>
+  it.effect("sends the short-lived ticket and client origin on the RPC URL", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(
         Response.json(
@@ -474,14 +474,11 @@ describe("remote environment authorization", () => {
           appVersion: "1.2.3",
           deviceType: "mobile",
           os: "Android",
-          osMajorVersion: 15,
-          deviceModel: "Pixel 9",
         },
-        connectionMethod: "relay",
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
       expect(url).toBe(
-        "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay",
+        "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3",
       );
     }),
   );

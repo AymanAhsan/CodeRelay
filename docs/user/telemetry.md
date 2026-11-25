@@ -1,11 +1,8 @@
-# Product usage data
+# Telemetry
 
-The CodeRelay server sends product usage events to PostHog, associated with a hashed account or
-installation identifier. Events include the provider, model, reasoning effort, permission mode,
-turn result, duration, and main-agent token totals when available.
+CodeRelay has removed product usage reporting and relay trace export. To use this change, update
+your clients and the CodeRelay server they connect to. If you operate a relay, update its Worker
+as well.
 
-Events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
-raw provider events, or child-agent output. Child-agent token use is excluded from the totals.
-
-To disable collection, set `T3CODE_TELEMETRY_ENABLED=false` in the server's environment before
-starting it. This stops product events from being recorded or sent.
+Local diagnostics and usage history are available in the app. Server operators can configure
+[OpenTelemetry export](../operations/observability.md) to a collector of their choice.

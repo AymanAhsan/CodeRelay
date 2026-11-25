@@ -37,7 +37,6 @@ import {
   withoutCapturedParentSpan,
 } from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
-import { makeRelayTraceLayer, RelayObservability } from "./observability.ts";
 import * as DeliveryAttempts from "./agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "./agentActivity/AgentActivityRows.ts";
 import * as Devices from "./agentActivity/Devices.ts";
@@ -139,7 +138,6 @@ export const ApiLive = Api.make(
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
-    const observability = yield* RelayObservability;
 
     //
     // 2. Create bindings
@@ -163,10 +161,6 @@ export const ApiLive = Api.make(
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
-
-    const axiomDatasetName = yield* observability.traces.name;
-    const axiomIngestToken = yield* observability.workerIngestToken.token;
-    const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
 
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
@@ -211,14 +205,6 @@ export const ApiLive = Api.make(
         managedEndpointCleanupMode,
       });
     });
-
-    const relayTraceLayer = Layer.unwrap(
-      Effect.all({
-        tracesDatasetName: axiomDatasetName,
-        tracesEndpoint: axiomTracesEndpoint,
-        ingestToken: axiomIngestToken,
-      }).pipe(Effect.map(makeRelayTraceLayer)),
-    );
 
     const runtimeLayer = Layer.empty.pipe(
       Layer.provideMerge(MobileRegistrations.layer),
@@ -364,11 +350,7 @@ export const ApiLive = Api.make(
           ),
         ],
         { concurrency: 2, discard: true },
-      ).pipe(
-        Effect.withSpan("relay.cron.prune_expired_state"),
-        // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
-        Effect.provide(Layer.merge(runtimeLayer, relayTraceLayer)),
-      ),
+      ).pipe(Effect.withSpan("relay.cron.prune_expired_state"), Effect.provide(runtimeLayer)),
     );
 
     const fetch = Layer.merge(
@@ -384,7 +366,7 @@ export const ApiLive = Api.make(
       HttpRouter.toHttpEffect,
       Effect.provideService(HttpRouter.RouterConfig, RELAY_HTTP_ROUTER_CONFIG),
       withoutCapturedParentSpan,
-      Effect.flatMap((httpEffect) => traceRelayHttpRequestWith(httpEffect, relayTraceLayer)),
+      Effect.flatMap((httpEffect) => traceRelayHttpRequestWith(httpEffect, Layer.empty)),
     );
 
     return { fetch };

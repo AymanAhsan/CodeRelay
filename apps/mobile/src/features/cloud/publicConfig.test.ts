@@ -6,7 +6,6 @@ import {
   hasAccountPublicConfig,
   hasCloudPublicConfig,
   hasCodeRelayAccounts,
-  hasTracingPublicConfig,
   resolveCloudPublicConfig,
   resolveRelayClerkTokenOptions,
 } from "./publicConfig";
@@ -50,11 +49,6 @@ describe("resolveCloudPublicConfig", () => {
       relay: {
         url: null,
       },
-      observability: {
-        tracesUrl: null,
-        tracesDataset: null,
-        tracesToken: null,
-      },
     });
   });
 
@@ -63,11 +57,6 @@ describe("resolveCloudPublicConfig", () => {
       resolveCloudPublicConfig({
         clerk: { publishableKey: "  pk_test_example  ", jwtTemplate: "  t3-relay  " },
         relay: { url: " https://relay.example.test/// " },
-        observability: {
-          tracesUrl: " https://api.axiom.co/v1/traces ",
-          tracesDataset: " mobile-traces ",
-          tracesToken: " public-ingest-token ",
-        },
       }),
     ).toEqual({
       clerk: {
@@ -77,12 +66,23 @@ describe("resolveCloudPublicConfig", () => {
       relay: {
         url: "https://relay.example.test",
       },
-      observability: {
-        tracesUrl: "https://api.axiom.co/v1/traces",
-        tracesDataset: "mobile-traces",
-        tracesToken: "public-ingest-token",
-      },
     });
+  });
+
+  it("ignores legacy tracing configuration in an existing Expo manifest", () => {
+    const oldManifest = {
+      relay: { url: "https://relay.example.test" },
+      observability: {
+        tracesUrl: "https://collector.example.test/v1/traces",
+        tracesDataset: "legacy",
+        tracesToken: "legacy-token",
+      },
+    };
+    expect(resolveCloudPublicConfig(oldManifest)).toEqual(
+      resolveCloudPublicConfig({
+        relay: oldManifest.relay,
+      }),
+    );
   });
 
   it("rejects an insecure relay URL", () => {
@@ -99,52 +99,6 @@ describe("resolveCloudPublicConfig", () => {
       relay: {
         url: null,
       },
-      observability: {
-        tracesUrl: null,
-        tracesDataset: null,
-        tracesToken: null,
-      },
     });
-  });
-
-  it("rejects an insecure traces URL", () => {
-    expect(
-      resolveCloudPublicConfig({
-        observability: {
-          tracesUrl: "http://api.axiom.co/v1/traces",
-          tracesDataset: "mobile-traces",
-          tracesToken: "public-ingest-token",
-        },
-      }).observability,
-    ).toEqual({
-      tracesUrl: null,
-      tracesDataset: "mobile-traces",
-      tracesToken: "public-ingest-token",
-    });
-  });
-
-  it("keeps tracing disabled unless every public tracing value is configured", () => {
-    expect(hasTracingPublicConfig(resolveCloudPublicConfig({}))).toBe(false);
-    expect(
-      hasTracingPublicConfig(
-        resolveCloudPublicConfig({
-          observability: {
-            tracesUrl: "https://api.axiom.co/v1/traces",
-            tracesDataset: "mobile-traces",
-          },
-        }),
-      ),
-    ).toBe(false);
-    expect(
-      hasTracingPublicConfig(
-        resolveCloudPublicConfig({
-          observability: {
-            tracesUrl: "https://api.axiom.co/v1/traces",
-            tracesDataset: "mobile-traces",
-            tracesToken: "public-ingest-token",
-          },
-        }),
-      ),
-    ).toBe(true);
   });
 });

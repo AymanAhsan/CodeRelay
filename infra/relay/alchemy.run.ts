@@ -1,6 +1,5 @@
 // @effect-diagnostics anyUnknownInErrorContext:off layerMergeAllWithDependencies:off - Alchemy provider helpers expose framework-owned any requirements.
 import * as Alchemy from "alchemy";
-import * as Output from "alchemy/Output";
 import * as Axiom from "alchemy/Axiom";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";
@@ -8,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Planetscale from "alchemy/Planetscale";
 
-import { PublishClientConfig, tokenDigest } from "./src/clientConfig.ts";
+import { PublishClientConfig } from "./src/clientConfig.ts";
 import * as RelayDb from "./src/db.ts";
 import { RelayObservability } from "./src/observability.ts";
 import { ManagedEndpointZone, RelayApiZone } from "./src/zone.ts";
@@ -30,21 +29,9 @@ export default Alchemy.Stack(
     const hyperdrive = yield* RelayDb.RelayHyperdrive;
     const managedEndpointZone = yield* ManagedEndpointZone.pipe(Effect.orDie);
     const relayApiZone = yield* RelayApiZone.pipe(Effect.orDie);
-    const observability = yield* RelayObservability;
+    yield* RelayObservability;
     const api = yield* Api;
-    yield* PublishClientConfig({
-      url: api.url,
-      mobileTracingUrl: observability.traces.otelTracesEndpoint,
-      mobileTracingDataset: observability.traces.name,
-      mobileTracingToken: observability.mobileIngestToken.token,
-      clientTracingUrl: observability.traces.otelTracesEndpoint,
-      clientTracingDataset: observability.traces.name,
-      clientTracingToken: observability.clientIngestToken.token,
-      tokenDigest: Output.map(
-        Output.all(observability.mobileIngestToken.token, observability.clientIngestToken.token),
-        tokenDigest,
-      ),
-    });
+    yield* PublishClientConfig({ url: api.url });
 
     return {
       databaseName: db.database.name,
@@ -54,12 +41,6 @@ export default Alchemy.Stack(
       url: api.url,
       relayApiZoneId: relayApiZone.zoneId,
       managedEndpointZoneId: managedEndpointZone.zoneId,
-      mobileTracingUrl: observability.traces.otelTracesEndpoint,
-      mobileTracingDataset: observability.traces.name,
-      mobileTracingToken: observability.mobileIngestToken.token,
-      clientTracingUrl: observability.traces.otelTracesEndpoint,
-      clientTracingDataset: observability.traces.name,
-      clientTracingToken: observability.clientIngestToken.token,
     };
   }).pipe(Effect.provide(ApiLive)),
 );

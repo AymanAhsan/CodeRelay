@@ -6,11 +6,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
-import { PublishClientConfig, reconcileEnvFile, tokenDigest } from "./clientConfig.ts";
+import { PublishClientConfig, reconcileEnvFile } from "./clientConfig.ts";
 
 describe("reconcileEnvFile", () => {
   it("adds every entry to an empty file", () => {
@@ -57,16 +56,7 @@ const { test } = Test.make({
   state: inMemoryState(),
 });
 
-const clientConfig = (token: string) => ({
-  url: "https://relay.example.com",
-  mobileTracingUrl: "https://axiom.example.com/v1/traces",
-  mobileTracingDataset: "relay-traces",
-  mobileTracingToken: Redacted.make(`mobile-${token}`),
-  clientTracingUrl: "https://axiom.example.com/v1/traces",
-  clientTracingDataset: "relay-traces",
-  clientTracingToken: Redacted.make(`client-${token}`),
-  tokenDigest: tokenDigest([Redacted.make(`mobile-${token}`), Redacted.make(`client-${token}`)]),
-});
+const clientConfig = { url: "https://relay.example.com" };
 
 describe("PublishClientConfig", () => {
   test.provider("writes the env file on deploy and skips an unchanged redeploy", (stack) =>
@@ -82,23 +72,23 @@ describe("PublishClientConfig", () => {
         ),
       );
 
-      yield* stack.deploy(PublishClientConfig(clientConfig("v1"))).pipe(configured);
+      yield* stack.deploy(PublishClientConfig(clientConfig)).pipe(configured);
       const first = yield* fs.readFileString(target);
       expect(first).toContain("KEEP=yes\n");
       expect(first).toContain("T3CODE_RELAY_URL=https://relay.example.com\n");
-      expect(first).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v1\n");
-      expect(first).toContain("T3CODE_MOBILE_OTLP_TRACES_TOKEN=mobile-v1\n");
 
       // Same input: the action is skipped, so a change made by hand survives.
       yield* fs.writeFileString(target, `${first}MANUAL=1\n`);
-      yield* stack.deploy(PublishClientConfig(clientConfig("v1"))).pipe(configured);
+      yield* stack.deploy(PublishClientConfig(clientConfig)).pipe(configured);
       expect(yield* fs.readFileString(target)).toContain("MANUAL=1\n");
 
-      // A rotated token changes the input, so it runs again and replaces the line.
-      yield* stack.deploy(PublishClientConfig(clientConfig("v2"))).pipe(configured);
+      // A new worker URL changes the input and replaces the old URL.
+      yield* stack
+        .deploy(PublishClientConfig({ url: "https://new-relay.example.com" }))
+        .pipe(configured);
       const third = yield* fs.readFileString(target);
-      expect(third).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");
-      expect(third).not.toContain("client-v1");
+      expect(third).toContain("T3CODE_RELAY_URL=https://new-relay.example.com\n");
+      expect(third).not.toContain("T3CODE_RELAY_URL=https://relay.example.com\n");
       expect(third).toContain("KEEP=yes\n");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -110,7 +100,7 @@ describe("PublishClientConfig", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-config-" });
       const target = path.join(dir, "client.env");
       const exit = yield* stack
-        .deploy(PublishClientConfig({ ...clientConfig("v1"), url: undefined }))
+        .deploy(PublishClientConfig({ url: undefined }))
         .pipe(
           Effect.provide(
             ConfigProvider.layer(
@@ -134,8 +124,7 @@ describe("PublishClientConfig", () => {
       const exit = yield* stack
         .deploy(
           PublishClientConfig({
-            ...clientConfig("v1"),
-            clientTracingDataset: "relay-traces\nINJECTED=1",
+            url: "https://relay.example.com\nINJECTED=1",
           }),
         )
         .pipe(
